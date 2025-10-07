@@ -1,5 +1,5 @@
 import datetime, pathlib
-import sys, os
+import sys, os, shutil
 import git # pip install gitpython
 
 ARCHIVE = '_archives'
@@ -10,16 +10,19 @@ repo = git.Repo(os.path.dirname(__file__))
 if True:
 
     timestamp = \
-        datetime.datetime.now().strftime("%Y-%m-%d-%H:%M:%S")
+        datetime.datetime.now().strftime("%d-")+\
+        datetime.datetime.now().strftime("%A-")+\
+        datetime.datetime.now().strftime("%H:%M:%S")
 
-    pathlib.Path.mkdir(os.path.join(ARCHIVE,
-                    datetime.datetime.now().strftime("%Y")))
+    pathlib.Path(os.path.join(ARCHIVE,
+        datetime.datetime.now().strftime("%Y"))).mkdir(\
+                                                exist_ok=True)
 
     folder = os.path.join(ARCHIVE,
                           datetime.datetime.now().strftime("%Y"),
                           datetime.datetime.now().strftime("%B"))
 
-    pathlib.Path.mkdir(folder, exist_ok=True)
+    pathlib.Path(folder).mkdir(exist_ok=True)
     
     filename = '%s-%s' %(timestamp,
                          os.path.basename(sys.argv[-1]))
@@ -35,4 +38,9 @@ if True:
 
     repo.index.add(os.path.join(folder, filename))
     repo.index.commit('add '+filename) 
-    repo.remotes.origin.push()
+    try:
+        repo.remotes.origin.push()
+        print('  successfully pushed')
+    except BaseException as be:
+        print('  not pushed ...')
+
