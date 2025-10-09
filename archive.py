@@ -1,13 +1,28 @@
 import datetime, pathlib
-import sys, os, shutil
+import sys, os, shutil, argparse
 import git # pip install gitpython
 
 ARCHIVE = '_archives'
 
 repo = git.Repo(os.path.dirname(__file__))
 
-# if os.path.isfile(sys.argv[-1]):
-if True:
+parser=argparse.ArgumentParser(description="""
+
+    archive a given script in the lab notebook
+
+    python archive.py your-script.py
+
+    N.B. 
+        [de-archive] TBD
+
+                               """,
+                                formatter_class=argparse.RawTextHelpFormatter)
+
+parser.add_argument("filename")
+
+args = parser.parse_args()
+  
+if os.path.isfile(args.filename):
 
     timestamp = \
         datetime.datetime.now().strftime("%d-")+\
@@ -40,7 +55,7 @@ if True:
     repo.index.commit('add '+filename) 
     try:
         repo.remotes.origin.push()
-        print('  successfully pushed')
+        print('  [ok] successfully pushed')
     except BaseException as be:
-        print('  not pushed ...')
+        print('  [xx] not pushed ...')
 
