@@ -46,7 +46,8 @@ def archive_file(args, test=False):
 
 def unarchive_file(args, test=False):
 
-    filename =  os.path.basename(args.filename).split(':')[-1][3:]
+    filename =  os.path.basename(args.filename).split('.')[-2][3:]+\
+            '.'+os.path.basename(args.filename).split('.')[-1]
 
     print("""
         bringing back the archive: '%s' 
@@ -82,7 +83,7 @@ if __name__=='__main__':
       
     if os.path.isfile(args.filename):
 
-        if len(args.filename.split(':'))>2:
+        if len(args.filename.split('.'))>=4:
             unarchive_file(args, test=args.debug)
         else:
             archive_file(args, test=args.debug)
