@@ -9,7 +9,7 @@ def archive_file(args, test=False):
     timestamp = \
         datetime.datetime.now().strftime("%d-")+\
         datetime.datetime.now().strftime("%A-")+\
-        datetime.datetime.now().strftime("%H:%M:%S")
+        datetime.datetime.now().strftime("%H.%M.%S")
 
     pathlib.Path(os.path.join(ARCHIVE,
         datetime.datetime.now().strftime("%Y"))).mkdir(\
