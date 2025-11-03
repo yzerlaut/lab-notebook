@@ -17,7 +17,7 @@ def archive_file(args, test=False):
 
     folder = os.path.join(ARCHIVE,
                           datetime.datetime.now().strftime("%Y"),
-                          datetime.datetime.now().strftime("%B"))
+                          datetime.datetime.now().strftime("%m-%B"))
 
     pathlib.Path(folder).mkdir(exist_ok=True)
     
