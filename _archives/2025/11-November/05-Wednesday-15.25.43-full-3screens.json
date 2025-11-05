@@ -1,0 +1,16 @@
+{
+  "Presentation": "Stimuli-Sequence",
+  "Stimulus": "grating",
+  "Screen": "LN-VR-3screens",
+  "presentation-duration": 2,
+  "presentation-prestim-period": 1,
+  "presentation-poststim-period": 1,
+  "presentation-interstim-period": 1,
+  "N-repeat": 1,
+  "_______________________________________________________________________1":0,
+  "spatial-freq": 0.05,
+  "speed": 1,
+  "radius": 200,
+  "_______________________________________________________________________2":0,
+  "angle-1": 0.0, "angle-2": 315.0, "N-angle": 8
+}
