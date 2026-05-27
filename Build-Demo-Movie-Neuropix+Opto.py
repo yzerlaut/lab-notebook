@@ -2,7 +2,7 @@
 import os, sys
 import numpy as np
 sys.path += ['physion/src']
-import physion
+from physion.assembling.dataset import read_spreadsheet
 
 from open_ephys.analysis import Session as OpenEphysSession
 
@@ -10,7 +10,7 @@ from open_ephys.analysis import Session as OpenEphysSession
 datafolder = os.path.expanduser('~/DATA/2026_04_24').replace('/', os.path.sep)
 iRec = 1 
 
-datatable, _, _ = physion.assembling.dataset.read_spreadsheet(\
+datatable, _, _ = read_spreadsheet(\
                     os.path.join(datafolder, 'DataTable.xlsx'),
                             get_metadata_from='files')
 
@@ -25,7 +25,8 @@ raw_data_folder =os.path.join(datafolder, datatable['time'][iRec])
 # ##  Load NWB data and build data modalities
 
 # %%
-data = physion.analysis.read_NWB.Data(nwbfile)
+from physion.analysis.read_NWB import Data
+data = Data(nwbfile)
 data.init_visual_stim()#force_degree=True)
 # data.init_visual_stim(force_degree=True)
 
@@ -36,9 +37,9 @@ data.build_running_speed()
 from scipy.ndimage import gaussian_filter1d
 
 data.build_facemotion()
-data.facemotion = gaussian_filter1d(data.facemotion, 2)
+# data.facemotion = gaussian_filter1d(data.facemotion, 2)
 data.build_pupil_diameter()
-data.pupil_diameter = gaussian_filter1d(data.pupil_diameter, 8)
+# data.pupil_diameter = gaussian_filter1d(data.pupil_diameter, 8)
 
 # %%
 from physion.dataviz.raw import plot as plot_raw, find_default_plot_settings
@@ -54,15 +55,15 @@ if False:
 # ##  Load FaceCamera data
 
 # %%
+from physion.utils.camera import CameraData
 NIdaq_Tstart = np.load(os.path.join(raw_data_folder, 'NIdaq.start.npy'))[0]
-faceCamera = physion.utils.camera.CameraData(\
-                        'FaceCamera', raw_data_folder,
+
+faceCamera = CameraData('FaceCamera', raw_data_folder,
                         t0=NIdaq_Tstart)
 
 
 # %%
-rigCamera = physion.utils.camera.CameraData(\
-                        'RigCamera', raw_data_folder,
+rigCamera = CameraData('RigCamera', raw_data_folder,
                         t0=NIdaq_Tstart)
 # %% # load EPHYS data
 nStart, nStop = datatable['nStart'][iRec], datatable['nStop'][iRec]
@@ -124,6 +125,8 @@ params =\
     "                                                ":""
 }
 # %%
+from physion.dataviz import snapshot
+
 time = 0
 import matplotlib.pylab as plt
 def update_ephys(AX, data, params, rec, t):
@@ -140,38 +143,38 @@ def update_ephys(AX, data, params, rec, t):
         AX['axEphys'].plot(rec.t[cond]-t, y+params['ephys_shift_factor']*c, lw=0.5, color=plt.cm.Dark2(c))
 
     AX['axEphys'].plot([0,0.1], [0,0])
+
 for time in [100, 151.2]:
 
-    fig, AX = physion.dataviz.snapshot.layout(imaging=False)
+    fig, AX = snapshot.layout(imaging=False)
 
-    # physion.dataviz.snapshot.init_imaging(AX, params, data)
-    physion.dataviz.snapshot.plot_traces(AX, params, data)
-    physion.dataviz.snapshot.init_screen(AX, data)
-    physion.dataviz.snapshot.update_screen(AX, data, time)
-    physion.dataviz.snapshot.init_camera(AX, params, faceCamera, 'Face')
-    physion.dataviz.snapshot.init_camera(AX, params, rigCamera, 'Rig')
-    physion.dataviz.snapshot.update_camera(AX, params, faceCamera, time, 'Face')
-    physion.dataviz.snapshot.update_camera(AX, params, rigCamera, time, 'Rig')
-    physion.dataviz.snapshot.init_pupil(AX, data, params, faceCamera)
-    physion.dataviz.snapshot.update_pupil(AX, data, params, faceCamera, time)
-    physion.dataviz.snapshot.init_whisking(AX, data, params, faceCamera)
-    physion.dataviz.snapshot.update_whisking(AX, data, params, faceCamera, time)
-    physion.dataviz.snapshot.update_timer(AX, time)
+    # snapshot.init_imaging(AX, params, data)
+    snapshot.plot_traces(AX, params, data)
+    snapshot.init_screen(AX, data)
+    snapshot.update_screen(AX, data, time)
+    snapshot.init_camera(AX, params, faceCamera, 'Face')
+    snapshot.init_camera(AX, params, rigCamera, 'Rig')
+    snapshot.update_camera(AX, params, faceCamera, time, 'Face')
+    snapshot.update_camera(AX, params, rigCamera, time, 'Rig')
+    snapshot.init_pupil(AX, data, params, faceCamera)
+    snapshot.update_pupil(AX, data, params, faceCamera, time)
+    snapshot.init_whisking(AX, data, params, faceCamera)
+    snapshot.update_whisking(AX, data, params, faceCamera, time)
+    snapshot.update_timer(AX, time)
     update_ephys(AX, data, params, rec, time)
     physion.utils.plot_tools.plt.show()
-
-    
 
 
 # %% [markdown]
 # ## Build the movie
-
 # %%
+from physion.dataviz import movie
 if False:
-    fig, AX = physion.dataviz.snapshot.layout(imaging=False)
-    _, _, ani = physion.dataviz.movie.build(fig, AX, data, params,
+    fig, AX = snapshot.layout(imaging=False)
+    _, _, ani = movie.build(fig, AX, data, params,
                                             faceCamera=faceCamera,
                                             rigCamera=rigCamera,
                                             ephysData=rec,
                                             Ndiscret=200)
-    physion.dataviz.movie.write(ani, FPS=5)
+    movie.write(ani, FPS=5)
+# %%
