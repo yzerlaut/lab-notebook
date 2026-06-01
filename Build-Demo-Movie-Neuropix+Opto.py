@@ -1,8 +1,11 @@
 # %%
 import os, sys
 import numpy as np
+import matplotlib.pylab as plt
 sys.path += ['physion/src']
 from physion.assembling.dataset import read_spreadsheet
+from physion.utils import plot_tools as pt
+from physion.dataviz import snapshot
 
 from open_ephys.analysis import Session as OpenEphysSession
 
@@ -41,6 +44,9 @@ data.build_facemotion()
 data.build_pupil_diameter()
 # data.pupil_diameter = gaussian_filter1d(data.pupil_diameter, 8)
 
+visual_stim = np.zeros(len(data.t_)
+data.build_
+
 # %%
 from physion.dataviz.raw import plot as plot_raw, find_default_plot_settings
 settings = find_default_plot_settings(data)#, with_subsampling=True)
@@ -56,15 +62,11 @@ if False:
 
 # %%
 from physion.utils.camera import CameraData
-NIdaq_Tstart = np.load(os.path.join(raw_data_folder, 'NIdaq.start.npy'))[0]
-
-faceCamera = CameraData('FaceCamera', raw_data_folder,
-                        t0=NIdaq_Tstart)
-
+faceCamera = CameraData('FaceCamera', raw_data_folder)
 
 # %%
-rigCamera = CameraData('RigCamera', raw_data_folder,
-                        t0=NIdaq_Tstart)
+rigCamera = CameraData('RigCamera', raw_data_folder)
+
 # %% # load EPHYS data
 nStart, nStop = datatable['nStart'][iRec], datatable['nStop'][iRec]
 
@@ -89,8 +91,9 @@ params =\
     " ############################################## ":"",
     " #############  ephys properties ############ ":"",
     " ############################################## ":"",
-    "ephys_interval":1.,
-    "ephys_channels":[50, 69, 81, 119],
+    "ephys_interval":10.,
+    "ephys_channels":[50, 81, 71, 91, 92, 93],
+    # "ephys_channels":[103, 104, 105],
     "ephys_shift_factor":4,
     "                                                ":"",
     " ############################################## ":"",
@@ -125,10 +128,7 @@ params =\
     "                                                ":""
 }
 # %%
-from physion.dataviz import snapshot
-
 time = 0
-import matplotlib.pylab as plt
 def update_ephys(AX, data, params, rec, t):
 
     i0 = np.argmin((rec.t-t)**2)
@@ -143,9 +143,14 @@ def update_ephys(AX, data, params, rec, t):
         AX['axEphys'].plot(rec.t[cond]-t, y+params['ephys_shift_factor']*c, lw=0.5, color=plt.cm.Dark2(c))
 
     AX['axEphys'].plot([0,0.1], [0,0])
+    ylim = AX['axEphys'].get_ylim()
+    dy, y0 = ylim[1]-ylim[0], ylim[0]
+    cond = (data.t_LED>(t-params['ephys_interval']/2.)) & (data.t_LED<(t+params['ephys_interval']/2.))
+    AX['axEphys'].fill_between(data.t_LED[cond]-t, y0+0*data.t_LED[cond], y0+data.LED[cond]*dy, alpha=.1)
 
-for time in [100, 151.2]:
 
+
+def show(time):
     fig, AX = snapshot.layout(imaging=False)
 
     # snapshot.init_imaging(AX, params, data)
@@ -162,8 +167,18 @@ for time in [100, 151.2]:
     snapshot.update_whisking(AX, data, params, faceCamera, time)
     snapshot.update_timer(AX, time)
     update_ephys(AX, data, params, rec, time)
-    physion.utils.plot_tools.plt.show()
+    pt.plt.show() 
 
+for time in 97+np.arange(10)*16:
+    show(time)
+
+
+
+
+# %%
+pt.image(\
+    faceCamera.get_from_time(150).T
+    )
 
 # %% [markdown]
 # ## Build the movie
