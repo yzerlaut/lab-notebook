@@ -16,6 +16,6 @@ rec = rec.save(folder='/tmp')
 # %%
 sorting = ss.run_sorter(sorter_name='kilosort4', 
                         recording=rec,
-                        folder="/tmp/kilosort3", 
+                        folder="/tmp/", 
                         docker_image=True)
 
