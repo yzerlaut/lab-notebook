@@ -40,17 +40,16 @@ data.build_running_speed()
 from scipy.ndimage import gaussian_filter1d
 
 data.build_facemotion()
-# data.facemotion = gaussian_filter1d(data.facemotion, 2)
+data.facemotion = gaussian_filter1d(data.facemotion, 2)
 data.build_pupil_diameter()
 # data.pupil_diameter = gaussian_filter1d(data.pupil_diameter, 8)
 
-visual_stim = np.zeros(len(data.t_)
-data.build_
 
 # %%
-from physion.dataviz.raw import plot as plot_raw, find_default_plot_settings
-settings = find_default_plot_settings(data)#, with_subsampling=True)
-_ = plot_raw(data, settings=settings, tlim=[100, 250])
+if False:
+    from physion.dataviz.raw import plot as plot_raw, find_default_plot_settings
+    settings = find_default_plot_settings(data)#, with_subsampling=True)
+    _ = plot_raw(data, settings=settings, tlim=[100, 250])
 
 # %%
 if False:
@@ -85,16 +84,16 @@ params =\
     " ############################################## ":"",
     " ############  data sample properties ######### ":"",
     " ############################################## ":"",
-    "tlim":[100,250],
+    "tlim":[132,240],
     "zoomROIs":[0,1],
     "                                                ":"",
     " ############################################## ":"",
     " #############  ephys properties ############ ":"",
     " ############################################## ":"",
-    "ephys_interval":10.,
-    "ephys_channels":[50, 81, 71, 91, 92, 93],
-    # "ephys_channels":[103, 104, 105],
+    "ephys_interval":15.,
+    "ephys_channels":[92, 91, 50, 81, 71, 105],
     "ephys_shift_factor":4,
+    "ephys_Tbar":0.5,
     "                                                ":"",
     " ############################################## ":"",
     " ##########  Face-camera properties ########### ":"",
@@ -127,28 +126,8 @@ params =\
                   "visual_stim":2, "visual_stim_start":2.0},
     "                                                ":""
 }
+params['ephys_nStart'], params['ephys_nStop'] = nStart, nStop
 # %%
-time = 0
-def update_ephys(AX, data, params, rec, t):
-
-    i0 = np.argmin((rec.t-t)**2)
-    
-    cond = (rec.t>(t-params['ephys_interval']/2.)) & (rec.t<(t+params['ephys_interval']/2.))
-
-    means = [rec.continuous['ProbeA'].samples[nStart:nStop,chan][cond].mean() for chan in params['ephys_channels']]
-    stds = [rec.continuous['ProbeA'].samples[nStart:nStop,chan][cond].std() for chan in params['ephys_channels']]
-
-    for c, chan in enumerate(params['ephys_channels']):
-        y = (rec.continuous['ProbeA'].samples[nStart:nStop,chan][cond]-means[c])/stds[c]
-        AX['axEphys'].plot(rec.t[cond]-t, y+params['ephys_shift_factor']*c, lw=0.5, color=plt.cm.Dark2(c))
-
-    AX['axEphys'].plot([0,0.1], [0,0])
-    ylim = AX['axEphys'].get_ylim()
-    dy, y0 = ylim[1]-ylim[0], ylim[0]
-    cond = (data.t_LED>(t-params['ephys_interval']/2.)) & (data.t_LED<(t+params['ephys_interval']/2.))
-    AX['axEphys'].fill_between(data.t_LED[cond]-t, y0+0*data.t_LED[cond], y0+data.LED[cond]*dy, alpha=.1)
-
-
 
 def show(time):
     fig, AX = snapshot.layout(imaging=False)
@@ -166,30 +145,68 @@ def show(time):
     snapshot.init_whisking(AX, data, params, faceCamera)
     snapshot.update_whisking(AX, data, params, faceCamera, time)
     snapshot.update_timer(AX, time)
-    update_ephys(AX, data, params, rec, time)
-    pt.plt.show() 
+    snapshot.init_ephys(AX, data, params, rec, time)
+    snapshot.update_ephys(AX, data, params, rec, time)
 
-for time in 97+np.arange(10)*16:
-    show(time)
+    return fig, AX
 
+# for time in 130+np.arange(3)*16:
+#     show(time)
+# pt.plt.show()
 
-
-
-# %%
-pt.image(\
-    faceCamera.get_from_time(150).T
-    )
 
 # %% [markdown]
 # ## Build the movie
 # %%
-from physion.dataviz import movie
 if False:
+    from physion.dataviz import movie
     fig, AX = snapshot.layout(imaging=False)
     _, _, ani = movie.build(fig, AX, data, params,
-                                            faceCamera=faceCamera,
-                                            rigCamera=rigCamera,
-                                            ephysData=rec,
-                                            Ndiscret=200)
-    movie.write(ani, FPS=5)
+                            faceCamera=faceCamera,
+                            rigCamera=rigCamera,
+                            ephysData=rec,
+                            Ndiscret=50)
+    pt.plt.show()
+    # movie.write(ani, FPS=5)
+
 # %%
+import matplotlib.animation as animation
+
+Ndiscret=400
+times = np.linspace(params['tlim'][0], params['tlim'][1], 
+                    Ndiscret)
+if True:
+    for i, t in enumerate(times):
+        fig, AX = show(t)
+        fig.savefig('tmp/%i.jpg' % i, dpi=150)
+        pt.plt.close(fig)
+
+# %%
+from PIL import Image
+def build():
+
+    fig, ax = plt.subplots(1, figsize=(8,4.5))
+    plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
+    im0 = Image.open('tmp/0.jpg')
+    im = ax.imshow(im0)
+    ax.axis('off')
+
+    def update(i=0):
+
+        im0 = Image.open('tmp/%i.jpg' % i)
+        im.set_array(im0)
+
+        return [im]
+
+    ani = animation.FuncAnimation(fig, 
+                                  update,
+                                  np.arange(len(times)),
+                                  init_func=update,
+                                  interval=100,
+                                  blit=True)
+
+    return fig, ax, ani
+
+from physion.dataviz import movie
+_, _, ani = build()
+movie.write(ani, FPS=10, DPI=150)
