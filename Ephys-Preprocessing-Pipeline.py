@@ -8,8 +8,8 @@ import spikeinterface.full as si
 
 rec = si.read_openephys(\
     os.path.join(\
-        os.path.expanduser('~'),
-            'DATA/Sally/2026_04_24/2026-04-24_12-23-16'),
+        # os.path.expanduser('~'),
+            '/home/user/DATA/Sally/2026_04_24/2026-04-24_12-23-16'),
                 stream_name='Record Node 101#OneBox-100.ProbeA')
 
 # 2) subselect channels nicely here 
@@ -30,7 +30,7 @@ rec = rec.save(folder='/tmp')
 # https://spikeinterface.readthedocs.io/en/stable/modules/sorters.html#running-sorters-in-docker-singularity-containers 
 sorting = ss.run_sorter(sorter_name='kilosort4', 
                         recording=rec,
-                        folder="/tmp/", 
+                        # folder="/tmp/", 
                         docker_image=True)
 
 # spike interface quickstart:
