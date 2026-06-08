@@ -23,7 +23,7 @@ rec = rec.frame_slice(1000000, 1300000) # 300k frames
 
 # 4) here add the compression if possible !
 #   ideally we would only store this...
-rec = rec.save(folder='/tmp')
+rec = rec.save(folder='/tmp/test')
 
 # %%
 # 5) run the spike sorting through docker
