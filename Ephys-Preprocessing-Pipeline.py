@@ -1,4 +1,5 @@
 # %%
+import os
 import spikeinterface.sorters as ss
 import spikeinterface.full as si
 
