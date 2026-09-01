@@ -16,37 +16,58 @@ from physion.dataviz.episodes.evoked_pattern\
 from physion.dataviz.episodes.trial_average\
     import plot as plot_trial_average
 
+from physion.dataviz.ephys import show_waveforms
+
 # %%
 datafolder = os.path.join(os.path.expanduser('~'), 
                     'DATA', 'Sally', 'Npx_WT_prelim_2026')
                     # 'DATA', 'Sally', '2026_06_09')
 
-# dataset = scan_folder_for_NWBfiles(datafolder) 
+dataset = scan_folder_for_NWBfiles(datafolder) 
 
 # %%
 filename = os.path.join(os.path.expanduser('~'),
-        'DATA/Sally/Npx_WT_prelim_2026/2026_06_09/2026_06_09-17-25-06.nwb'
-                        )
+        'DATA/Sally/Npx_WT_prelim_2026/2026_06_09/2026_06_09-17-25-06.nwb')
+data = Data(filename)
 # %%
 from physion.dataviz.raw import plot as plot_raw,\
             find_default_plot_settings
+settings = find_default_plot_settings(data )
+fig, _ = plot_raw(data, settings=settings)
+                        
+# %%
+settings = {
+ 'pupil': {'color': '#d62728',
+  'fig_fraction': 0.3,
+  'subsampling': 10,
+  'fig_fraction_start': 0.3},
+ 'facemotion': {'color': 'purple',
+  'fig_fraction': 0.3,
+  'subsampling': 10,
+  'fig_fraction_start': 0.3},
+ 'running': {'color': '#1f77b4',
+  'fig_fraction': 0.3,
+  'subsampling': 10,
+  'fig_fraction_start': 0.6}
+}
 
-# for f in dataset['files'][:1]:
-for f in [filename]:
-    print(f)
+
+for i, f in enumerate(dataset['files']):
     data = Data(f)
-    settings = find_default_plot_settings(data )
-    fig, _ = plot_raw(data, settings=settings)
-    pt.save(fig)
+    data.build_pupil()
+    data.build_facemotion()
+    if hasattr(data, 'pupil') and hasattr(data, 'facemotion'):
+        fig, _ = plot_raw(data, tlim=[2, data.tlim[1]], settings=settings)
+        fig.suptitle('%i) %s \n % s' % (i, f, data.metadata['protocol']))
+    # pt.save(fig)
 
-pt.plt.show()
 # %%
 
 def build():
     fig, AX = pt.figure(
         axes_extents=[[[1,3]],[[1,2]],[[1,2]],[[1,4]],
                     [[1,2]],[[1,2]],[[1,2]]],
-        ax_scale=(1.5,0.2))
+        ax_scale=(1.8,0.2))
     return fig,\
         {'spikes':AX[0],
          'rate':AX[1],
@@ -183,10 +204,19 @@ Settings2 = {
     'Tbar':0.5, 'Tbar_label':'500ms',
     'with_annot':False,
 }
-for settings in [Settings1, Settings2]:
+for settings in [Settings1]:
     fig, AX = build()
     plot(AX, **settings)
     figs.append(fig)
     AXs.append(AX)
 
+# %%
+data.build_spikeWaveforms()
+fig, _ = show_waveforms(data,
+               y_shift_factor=0.5,
+               channels_around=4,  
+               color='k')
+
+# %%
+pt.save(fig)
 # %%
