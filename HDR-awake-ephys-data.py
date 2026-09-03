@@ -19,21 +19,196 @@ from physion.dataviz.episodes.trial_average\
 from physion.dataviz.ephys import show_waveforms
 
 # %%
-datafolder = os.path.join(os.path.expanduser('~'), 
-                    'DATA', 'Sally', 'Npx_WT_prelim_2026')
-                    # 'DATA', 'Sally', '2026_06_09')
+if 0:
+    datafolder = os.path.join(os.path.expanduser('~'), 
+                        'DATA', 'Sally', 'Npx_WT_prelim_2026')
+                        # 'DATA', 'Sally', '2026_06_09')
 
-dataset = scan_folder_for_NWBfiles(datafolder) 
+    dataset = scan_folder_for_NWBfiles(datafolder) 
 
 # %%
 filename = os.path.join(os.path.expanduser('~'),
-        'DATA/Sally/Npx_WT_prelim_2026/2026_06_09/2026_06_09-17-25-06.nwb')
+        'DATA/Sally/Npx_WT_prelim_2026/NWBs/2026_07_29-17-36-41.nwb')
 data = Data(filename)
+
+# %%
+def build():
+    fig, AX = pt.figure(
+        axes_extents=[[[1,3]],[[1,2]],[[1,2]],[[1,4]],
+                    [[1,1]],[[1,1]],[[1,1]]],
+        ax_scale=(3.,0.35), hspace=0)
+    return fig,\
+        {'spikes':AX[0],
+         'rate':AX[1],
+         'MUA':AX[2],
+         'LFP':AX[3],
+         'pupil':AX[4],
+         'whisk':AX[5],
+         'run':AX[6]}
+
+def plot(data, AX, tlim=[0,10], 
+         subsampling=10,
+         spikes = dict(ms=0.5,
+                      color='dimgrey'),
+         rate = dict(smoothing=20e-3, 
+                     lim=[0,11], 
+                     color='dimgrey',
+                     scale=5, scale_label='5hz'),
+         MUA = dict(smoothing=20e-3, 
+                     lim=[30,75], 
+                     color='darkblue',
+                     scale=20, 
+                     electrode_average=[15,25],
+                     scale_label='20$\\mu$V'),
+         LFP = dict(lim=[-.5e3,2.2e3],
+                    space=0.6e3,
+                    scale=500,
+                    scale_label='500$\\mu$V',
+                    electrodes=[-4, -3, -2, -1],
+                    lw=0.5,
+                    color='darkgreen'),
+         pupil = dict(lim=[70,200],
+                      scale=50,
+                      scale_label='0.2mm  ',
+                      color='tab:red'),
+         whisk = dict(lim=[0,150],
+                      scale=200,
+                      scale_label='a.u.',
+                      color='tab:purple'),
+         run = dict(lim=[-1,4.5],
+                     scale=2,
+                      scale_label='2cm/s',
+                      color='tab:blue'),
+         Tbar=10, Tbar_label='10s',
+         with_annot=True):
+
+    dtlim = tlim[-1]-tlim[0]
+
+    # spikes
+    cond = (data.t_spikes>tlim[0]) & (data.t_spikes<tlim[1])
+    for i in range(data.spikes.shape[0]):
+        scond = (data.spikes[i,cond]==1)
+        AX['spikes'].plot(data.t_spikes[cond][scond],
+            i+data.spikes[i,cond][scond], 
+            'o', ms=spikes['ms'], fillstyle='full',
+            markerfacecolor=spikes['color'], markeredgecolor='none')
+    AX['spikes'].plot(tlim[0]+np.arange(2)*Tbar, 
+                      1.12*data.spikes.shape[0]+np.zeros(2), 'k-')
+    AX['spikes'].annotate(Tbar_label,
+                          (tlim[0], 1.18*data.spikes.shape[0]))
+    if with_annot:
+        AX['spikes'].annotate('%i units' % data.spikes.shape[0],\
+            (tlim[0]-0.025*dtlim, 0), ha='right', rotation=90)
+    spikes['lim'] = [-1, 1.18*data.spikes.shape[0]]
+    # rate
+    dt = data.t_spikes[1]-data.t_spikes[0]
+    fr = gaussian_filter1d(\
+        np.sum(data.spikes[:,cond], axis=0)/dt/data.spikes.shape[0], 
+        int(rate['smoothing']/dt))
+    AX['rate'].fill_between(data.t_spikes[cond][::subsampling],
+            0*data.t_spikes[cond][::subsampling], fr[::subsampling], 
+            color=spikes['color'], lw=0)
+
+    # MUA
+    cond = (data.t_MUA>tlim[0]) & (data.t_MUA<tlim[1])
+    dt = data.t_MUA[1]-data.t_MUA[0]
+    mua = data.MUA[MUA['electrode_average'][0]:MUA['electrode_average'][1],:].mean(axis=0)
+
+    AX['MUA'].fill_between(data.t_MUA[cond][::subsampling],
+            0*data.t_MUA[cond][::subsampling], 
+            gaussian_filter1d(mua[cond], int(MUA['smoothing']/dt))[::subsampling], 
+            color=MUA['color'], lw=0)
+
+    # LFP
+    cond = (data.t_LFP>tlim[0]) & (data.t_LFP<tlim[1])
+    dt = data.t_LFP[1]-data.t_LFP[0]
+    for e, elec in enumerate(LFP['electrodes']):
+        lfp = data.LFP[elec,:]
+        AX['LFP'].plot(data.t_LFP[cond][::subsampling],
+                LFP['space']*e+lfp[cond][::subsampling], 
+                lw=LFP['lw'], color=LFP['color'])
+
+    # Pupil, Whisking & Running
+    for key, t, mod, settings in zip(
+        ['pupil', 'whisk', 'run'], 
+        [data.t_pupil, data.t_facemotion, data.t_running],
+        [data.pupil, data.facemotion, data.running],
+        [pupil, whisk, run]):
+
+        cond = (t>tlim[0]) & (t<tlim[1]) & (mod<settings['lim'][1])
+        AX[key].plot(t[cond][::1],
+                mod[cond][::1], 
+                lw=1, color=settings['color'])
+
+    # visual stim condition.
+    stim_cond = ((data.time_start+data.time_duration)>tlim[0]) &\
+                    (data.time_start<tlim[1])
+
+    #### y-scale ####
+    for key, settings in zip(
+        ['spikes', 'rate', 'MUA', 'LFP', 'pupil', 'whisk', 'run'], 
+        [spikes, rate, MUA, LFP, pupil, whisk, run]):
+
+        AX[key].set_ylim(settings['lim'])
+
+        if with_annot and key!='spikes':
+                AX[key].plot((tlim[0]-0.025*dtlim)*np.ones(2),
+                                -settings['scale']*np.arange(2)+\
+                                    settings['lim'][0]+.5*np.diff(settings['lim']),
+                                color=settings['color'])
+                AX[key].annotate(settings['scale_label'],
+                    (tlim[0]-0.025*dtlim, settings['lim'][0]+.5*np.diff(settings['lim'])[0]),
+                    color=settings['color'], 
+                    va='center', ha='right', rotation=90)
+
+                   
+    #####################
+    for key in AX:
+        AX[key].axis('off')
+        AX[key].set_xlim([tlim[0]-0.05*dtlim, tlim[1]])
+
+
+
+def prepare_full_view(data):
+    data.build_spikes()
+    data.build_MUA()
+    data.build_LFP()
+    data.build_facemotion()
+    facemotion = gaussian_filter1d(data.facemotion, 100)
+    data.time_start = data.nwbfile.stimulus['time_start_realigned'].data[:]
+    data.time_duration = data.nwbfile.stimulus['time_duration'].data[:]
+    data.build_visual_stim()
+
+if 1:
+    prepare_full_view(data)
+
+if 1:
+    ZOOM = [360, 410]
+    fig, AX = build()
+    plot(data, AX, **{'tlim':ZOOM[0]+np.arange(2)*ZOOM[1]})
+
+    figs, AXs = [], []
+    Settings1 = {
+        'tlim': ZOOM[0]+np.arange(2)*ZOOM[1],
+        'Tbar':1, 'Tbar_label':'1s',
+        'subsampling':20,
+    }
+    for settings in [Settings1]:
+        fig, AX = build()
+        prepare_full_view(data)
+        plot(data, AX, **settings)
+        # figs.append(fig)
+        # AXs.append(AX)
+pt.save(fig)
+
+
 # %%
 from physion.dataviz.raw import plot as plot_raw,\
             find_default_plot_settings
 settings = find_default_plot_settings(data )
-fig, _ = plot_raw(data, settings=settings)
+fig, _ = plot_raw(data, 
+                  tlim=[360,410],
+                  settings=settings)
                         
 # %%
 settings = {
