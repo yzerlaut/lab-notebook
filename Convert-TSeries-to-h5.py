@@ -24,6 +24,7 @@ from PIL import Image
 from physion.utils.files import get_files_with_extension
 from physion.imaging.bruker.xml_parser import bruker_xml_parser
 from physion.utils.compression.h5 import tiffs_to_h5
+from physion.utils.progressBar import printProgressBar
 
 ROOT_FOLDER = '//iss/rebola/raw_data/cibele'
 H5_KEY = 'data'
@@ -84,14 +85,20 @@ def verify_h5(TS_folder, tiff_files, h5_file, batch_size=32):
             if dset.shape[0]!=len(tiff_files):
                 return '%i frames in h5 vs %i tiffs' % (dset.shape[0],
                                                        len(tiff_files))
-            for i0 in range(0, len(tiff_files), batch_size):
+            n = len(tiff_files)
+            for i0 in range(0, n, batch_size):
                 frames = dset[i0:i0+batch_size]
                 for frame, tiff in zip(frames, tiff_files[i0:i0+batch_size]):
                     ref = np.array(Image.open(os.path.join(TS_folder, tiff)))
                     if (ref.shape!=frame.shape) or\
                             (not np.array_equal(ref, frame)):
+                        print()
                         return 'frame mismatch with "%s"' % tiff
+                i1 = min([n, i0+batch_size])
+                printProgressBar(i1, n, prefix='    checking h5:',
+                                 suffix='(%i/%i frames)' % (i1, n))
     except BaseException as be:
+        print()
         return 'unreadable h5 (%s)' % be
     return None # no error
 
