@@ -14,111 +14,18 @@ usage:
     python Convert-TSeries-to-h5.py             # converts and deletes
     python Convert-TSeries-to-h5.py --no-delete # converts only
 """
-import sys, os, shutil, stat, argparse, time
+import sys, os, shutil, argparse, time
 sys.path += [os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           'physion', 'src')]
-import numpy as np
-import h5py
-from PIL import Image
 
-from physion.utils.files import get_files_with_extension
-from physion.imaging.bruker.xml_parser import bruker_xml_parser
-from physion.utils.compression.h5 import tiffs_to_h5
-from physion.utils.progressBar import printProgressBar
-from physion.imaging.folders import find_TSeries_folders, compressed_folder,\
-        plane_file
+# the checks are shared with the 2P-conversion window of physion
+from physion.utils.compression.h5 import tiffs_to_h5,\
+        build_conversion_plan, check_tiff_coverage, verify_h5,\
+        copy_non_tiff_content, remove_readonly
+from physion.imaging.folders import find_TSeries_folders, compressed_folder
 
 ROOT_FOLDER = '//iss/rebola/raw_data/cibele'
 H5_KEY = 'data'
-
-
-def is_tiff(filename):
-    return filename.lower().endswith(('.tif', '.tiff'))
-
-
-def build_conversion_plan(TS_folder, h5_folder):
-    """
-    returns a list of (h5_file, tiff_files)
-        with the same naming than physion.utils.compression.h5.convert_to_h5
-    """
-    xml_file = get_files_with_extension(TS_folder, extension='.xml')[0]
-    xml = bruker_xml_parser(xml_file)
-
-    plan = []
-    for chan in xml['channels']:
-        FILES = np.array(xml[chan]['tifFile'])
-        depth_index = np.array(xml[chan]['depth_index'])
-        for p in np.unique(depth_index):
-            plan.append((plane_file(h5_folder, chan, p, 'h5'),
-                         list(FILES[depth_index==p])))
-    return plan
-
-
-def check_tiff_coverage(TS_folder, plan):
-    """
-    returns the sets of:
-        - "missing" tiffs: in the xml but not in the folder
-        - "unplanned" tiffs: in the folder but not in the xml
-    """
-    planned = set(f for _, tiffs in plan for f in tiffs)
-    present = set(f for f in os.listdir(TS_folder) if is_tiff(f))
-    return planned-present, present-planned
-
-
-def verify_h5(TS_folder, tiff_files, h5_file, batch_size=32):
-    """ pixel-exact comparison of every h5 frame with its tiff """
-    try:
-        with h5py.File(h5_file, 'r') as f:
-            if H5_KEY not in f:
-                return 'no "%s" key' % H5_KEY
-            dset = f[H5_KEY]
-            if dset.shape[0]!=len(tiff_files):
-                return '%i frames in h5 vs %i tiffs' % (dset.shape[0],
-                                                       len(tiff_files))
-            n = len(tiff_files)
-            for i0 in range(0, n, batch_size):
-                frames = dset[i0:i0+batch_size]
-                for frame, tiff in zip(frames, tiff_files[i0:i0+batch_size]):
-                    ref = np.array(Image.open(os.path.join(TS_folder, tiff)))
-                    if (ref.shape!=frame.shape) or\
-                            (not np.array_equal(ref, frame)):
-                        print()
-                        return 'frame mismatch with "%s"' % tiff
-                i1 = min([n, i0+batch_size])
-                printProgressBar(i1, n, prefix='    checking h5:',
-                                 suffix='(%i/%i frames)' % (i1, n))
-    except BaseException as be:
-        print()
-        return 'unreadable h5 (%s)' % be
-    return None # no error
-
-
-def copy_non_tiff_content(TS_folder, h5_folder):
-    """ copy xml, env, References/, ... and check the copies on file sizes """
-    errors = []
-    for item in os.listdir(TS_folder):
-        src, dst = os.path.join(TS_folder, item), os.path.join(h5_folder, item)
-        if os.path.isdir(src):
-            shutil.copytree(src, dst, dirs_exist_ok=True)
-            pairs = [(os.path.join(root, f),
-                      os.path.join(dst, os.path.relpath(root, src), f))\
-                        for root, _, files in os.walk(src) for f in files]
-        elif not is_tiff(item):
-            shutil.copy2(src, dst)
-            pairs = [(src, dst)]
-        else:
-            continue
-        for s, d in pairs:
-            if (not os.path.isfile(d)) or\
-                    (os.path.getsize(s)!=os.path.getsize(d)):
-                errors.append('copy failed for "%s"' % s)
-    return errors
-
-
-def remove_readonly(func, path, _):
-    """ on network shares, some files can be read-only """
-    os.chmod(path, stat.S_IWRITE)
-    func(path)
 
 
 def process_TSeries(TS_folder, dry_run=False, delete=True):
