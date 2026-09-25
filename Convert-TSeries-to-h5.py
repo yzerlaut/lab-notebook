@@ -25,20 +25,11 @@ from physion.utils.files import get_files_with_extension
 from physion.imaging.bruker.xml_parser import bruker_xml_parser
 from physion.utils.compression.h5 import tiffs_to_h5
 from physion.utils.progressBar import printProgressBar
+from physion.imaging.folders import find_TSeries_folders, compressed_folder,\
+        plane_file
 
 ROOT_FOLDER = '//iss/rebola/raw_data/cibele'
 H5_KEY = 'data'
-
-
-def find_TSeries_folders(root):
-    """ all folders named "TSeries-..." (no search inside them) """
-    FOLDERS = []
-    for folder, subdirs, _ in os.walk(root):
-        for d in list(subdirs):
-            if d.startswith('TSeries-'):
-                FOLDERS.append(os.path.join(folder, d))
-                subdirs.remove(d) # do not walk inside TSeries folders
-    return sorted(FOLDERS)
 
 
 def is_tiff(filename):
@@ -58,8 +49,7 @@ def build_conversion_plan(TS_folder, h5_folder):
         FILES = np.array(xml[chan]['tifFile'])
         depth_index = np.array(xml[chan]['depth_index'])
         for p in np.unique(depth_index):
-            plan.append((os.path.join(h5_folder, '%s-plane%i.h5' %\
-                                            (chan.replace(' ','-'), p)),
+            plan.append((plane_file(h5_folder, chan, p, 'h5'),
                          list(FILES[depth_index==p])))
     return plan
 
@@ -133,8 +123,7 @@ def remove_readonly(func, path, _):
 
 def process_TSeries(TS_folder, dry_run=False, delete=True):
 
-    h5_folder = os.path.join(os.path.dirname(TS_folder),
-                    os.path.basename(TS_folder).replace('TSeries', 'h5', 1))
+    h5_folder = compressed_folder(TS_folder, 'h5')
     print('\n--> "%s" \n       to "%s"' % (TS_folder, h5_folder))
 
     plan = build_conversion_plan(TS_folder, h5_folder)
