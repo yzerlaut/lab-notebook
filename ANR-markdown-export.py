@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-anr_export.py: export an Obsidian-flavoured Markdown grant draft to an ANR
-AAPG pre-proposal, laid out like the official Word template.
+ANR-markdown-export.py: export an Obsidian-flavoured Markdown grant draft to
+a PDF ANR AAPG pre-proposal, laid out like the official template.
 
-    python anr_export.py Proposal.md            # -> Proposal.pdf  (via LaTeX, default)
-    python anr_export.py Proposal.md --docx     # -> Proposal.docx (filled Word template)
+    python ANR-markdown-export.py Proposal.md                 # -> Proposal.pdf
+    python ANR-markdown-export.py Proposal.md -o Other.pdf
 
-The LaTeX sources and converted figures are kept in a hidden folder next to
-the output (".<name>_build/"), so you can inspect or tweak the .tex.
+The LaTeX sources and converted figures are kept in a "<name>_build/" folder
+in the current working directory, so you can inspect or tweak the .tex.
 
 Requirements
 ------------
@@ -15,7 +15,6 @@ Requirements
     a TeX distribution          MacTeX / BasicTeX (xelatex)
     SVG figures                 brew install librsvg   (or: pip install cairosvg)
     carlito font                brew install --cask font-carlito
-    --docx only                 pip install python-docx lxml
 
 Markdown conventions
 --------------------
@@ -28,7 +27,7 @@ Markdown conventions
 * ## / ### / ####           Top heading level used -> section (I., II., ...),
                             next -> subsection (I.1, I.2, ...), next -> unnumbered.
                             Manual numbers such as "1." are stripped.
-* [Author et al., 2015](Key.pdf)
+* [Author et al., 2015](Key.pdf)  or  [Author et al., 2015](Key)
                             Numbered citation "[1]", linked to the reference list;
                             Key is looked up in the .bib file. Numbers follow the
                             order of first citation. "([A, 2015](A.pdf); [B, 2016](B.pdf))"
@@ -41,13 +40,16 @@ Markdown conventions
       %% location: top %%   optional: force the box to the top (or bottom) of a page
       ![](path/fig.svg)     image, at its own size; optionally {side=right}
       **| Short title.** …  legend; numbered automatically ("Fig. 2 | ...")
-                            PDF: framed floating box; the legend starts beside
+                            Framed floating box; the legend starts beside
                             the image and continues below it (goes fully below
                             if less than 4 cm is left beside the image).
 * [Fig.](path/fig.svg), [Fig.b](path/fig.svg)
                             Cross-reference -> "Fig. 2", "Fig. 2b".
 * An empty "References" heading receives the bibliography (added at the end
   if there is no such heading).
+* Journal names in the reference list are abbreviated with JOURNAL_ABBREVIATIONS
+  below (matching ignores case, a leading "The", "&" vs "and" and punctuation);
+  journals not listed are printed in full.
 """
 from __future__ import annotations
 
@@ -60,8 +62,71 @@ import subprocess
 import sys
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-DEFAULT_TEMPLATE = HERE / "anr-aapg-2027-template.docx"
+# Full journal name -> abbreviation used in the reference list (ISO 4 style).
+# Add entries as needed; one-word titles (Nature, Science, Neuron...) need none.
+JOURNAL_ABBREVIATIONS = {
+    # Nature / Science / Cell families
+    "Nature Neuroscience": "Nat. Neurosci.",
+    "Nature Reviews Neuroscience": "Nat. Rev. Neurosci.",
+    "Nature Communications": "Nat. Commun.",
+    "Nature Methods": "Nat. Methods",
+    "Nature Human Behaviour": "Nat. Hum. Behav.",
+    "Nature Biotechnology": "Nat. Biotechnol.",
+    "Nature Physics": "Nat. Phys.",
+    "Science Advances": "Sci. Adv.",
+    "Scientific Reports": "Sci. Rep.",
+    "Communications Biology": "Commun. Biol.",
+    "Current Biology": "Curr. Biol.",
+    "Cell Reports": "Cell Rep.",
+    "Cell Systems": "Cell Syst.",
+    # general science
+    "Proceedings of the National Academy of Sciences": "Proc. Natl. Acad. Sci. USA",
+    "Proceedings of the National Academy of Sciences of the United States of America": "Proc. Natl. Acad. Sci. USA",
+    "PLoS Biology": "PLoS Biol.",
+    "PLoS ONE": "PLoS ONE",
+    "Philosophical Transactions of the Royal Society B: Biological Sciences": "Philos. Trans. R. Soc. B",
+    "Proceedings of the Royal Society B: Biological Sciences": "Proc. R. Soc. B",
+    # neuroscience
+    "Journal of Neuroscience": "J. Neurosci.",
+    "Journal of Neurophysiology": "J. Neurophysiol.",
+    "Journal of Physiology": "J. Physiol.",
+    "Journal of Neuroscience Methods": "J. Neurosci. Methods",
+    "Journal of Comparative Neurology": "J. Comp. Neurol.",
+    "Journal of Cognitive Neuroscience": "J. Cogn. Neurosci.",
+    "Journal of Neural Engineering": "J. Neural Eng.",
+    "Journal of Vision": "J. Vis.",
+    "European Journal of Neuroscience": "Eur. J. Neurosci.",
+    "Cerebral Cortex": "Cereb. Cortex",
+    "Trends in Neurosciences": "Trends Neurosci.",
+    "Trends in Cognitive Sciences": "Trends Cogn. Sci.",
+    "Current Opinion in Neurobiology": "Curr. Opin. Neurobiol.",
+    "Annual Review of Neuroscience": "Annu. Rev. Neurosci.",
+    "Annual Review of Vision Science": "Annu. Rev. Vis. Sci.",
+    "Progress in Neurobiology": "Prog. Neurobiol.",
+    "Physiological Reviews": "Physiol. Rev.",
+    "Brain Research": "Brain Res.",
+    "Vision Research": "Vision Res.",
+    "Biological Psychiatry": "Biol. Psychiatry",
+    "Frontiers in Neuroscience": "Front. Neurosci.",
+    "Frontiers in Neural Circuits": "Front. Neural Circuits",
+    "Frontiers in Systems Neuroscience": "Front. Syst. Neurosci.",
+    "Frontiers in Cellular Neuroscience": "Front. Cell. Neurosci.",
+    "Frontiers in Physiology": "Front. Physiol.",
+    # computational neuroscience
+    "PLoS Computational Biology": "PLoS Comput. Biol.",
+    "Neural Computation": "Neural Comput.",
+    "Journal of Computational Neuroscience": "J. Comput. Neurosci.",
+    "Journal of Mathematical Neuroscience": "J. Math. Neurosci.",
+    "Frontiers in Computational Neuroscience": "Front. Comput. Neurosci.",
+    "Frontiers in Neuroinformatics": "Front. Neuroinform.",
+    "Biological Cybernetics": "Biol. Cybern.",
+    "Network: Computation in Neural Systems": "Network: Comput. Neural Syst.",
+    "Neural Networks": "Neural Netw.",
+    "Physical Review E": "Phys. Rev. E",
+    "Physical Review Letters": "Phys. Rev. Lett.",
+    "Physical Review X": "Phys. Rev. X",
+    "Advances in Neural Information Processing Systems": "Adv. Neural Inf. Process. Syst.",
+}
 
 PANDOC_FORMAT = ("markdown"
                  "-blank_before_header"
@@ -92,7 +157,7 @@ def warn(msg: str) -> None:
 
 
 # ==========================================================================
-# 1. Markdown pre-processing (shared by the PDF and DOCX targets)
+# 1. Markdown pre-processing
 # ==========================================================================
 
 def strip_comments(text: str, keep_figure_markers: bool = False) -> str:
@@ -139,7 +204,7 @@ def scan_figures(text: str) -> dict[str, tuple[int, str]]:
     return figs
 
 
-def replace_figure_refs(text: str, figs, target: str) -> str:
+def replace_figure_refs(text: str, figs) -> str:
     pat = re.compile(r"(?<!!)\[\s*(Fig(?:ure)?s?\.?)\s*([^\]]*)\]\(([^)]+\." + IMG_EXT + r")\)", re.I)
 
     def sub(m):
@@ -150,9 +215,7 @@ def replace_figure_refs(text: str, figs, target: str) -> str:
         if fig is None:
             warn(f"Cross-reference to a figure that is not in the document: {dest}")
             return f"{label} ??{suffix}"
-        if target == "latex":
-            return f"`{label}~\\ref{{{fig[1]}}}{suffix}`{{=latex}}"
-        return f"{label} {fig[0]}{suffix}"
+        return f"`{label}~\\ref{{{fig[1]}}}{suffix}`{{=latex}}"
 
     return pat.sub(sub, text)
 
@@ -160,21 +223,25 @@ def replace_figure_refs(text: str, figs, target: str) -> str:
 CITE_TOKEN = "\x00C{}\x00"
 
 
-def replace_citations(text: str, known_keys: set[str], target: str) -> tuple[str, list[str]]:
+def replace_citations(text: str, known_keys: set[str]) -> tuple[str, list[str]]:
     """Numbered citations, in order of first appearance.
 
     [Author et al., 2015](Key.pdf)          -> [n]
+    [Author et al., 2015](Key)              -> [n]
     [Isen and colleagues (1987)](Key.pdf)   -> Isen and colleagues [n]
     ([A, 2015](A.pdf); [B, 2016](B.pdf))   -> [n, m]
-    Keys missing from the .bib keep their text as written.
+    Keys missing from the .bib keep their text as written. A bare key missing
+    from the .bib is left as an ordinary link, unless its text ends with a year.
     """
     keys: list[str] = []
     missing: list[str] = []
-    pat = re.compile(r"(?<!!)\[([^\]]+)\]\(<?([^()\s/\\<>]+)\.pdf>?\)")
+    pat = re.compile(r"(?<!!)\[([^\]]+)\]\(<?([^()\s/\\<>#]+?)(\.pdf)?>?\)")
 
     def cite(m):
-        txt, key = m.group(1).strip(), m.group(2)
+        txt, key, pdf = m.group(1).strip(), m.group(2), m.group(3)
         if key not in known_keys:
+            if not pdf and not re.search(r"\d{4}[a-z]?\s*\)?$", txt):
+                return m.group(0)                        # an ordinary link
             missing.append(key)
             return txt
         if key not in keys:
@@ -195,20 +262,20 @@ def replace_citations(text: str, known_keys: set[str], target: str) -> tuple[str
     tok = r"\x00C(\d+)\x00"
     group = rf"{tok}(?:\s*[;,]\s*{tok})*"
     # "(tok; tok)" -> one bracket group, parentheses dropped
-    text = re.sub(rf"\(\s*({group})\s*\)", lambda m: render_group(m.group(1), keys, target), text)
+    text = re.sub(rf"\(\s*({group})\s*\)", lambda m: render_group(m.group(1), keys), text)
     # remaining runs of tokens ("tok; tok" or a single tok)
-    text = re.sub(group, lambda m: render_group(m.group(0), keys, target), text)
+    text = re.sub(group, lambda m: render_group(m.group(0), keys), text)
     return text, keys
 
 
-def colour(md: str, target: str) -> str:
-    """Colour a piece of markdown in the PDF (the Word output keeps its link style)."""
-    return f"`{{\\color{{anrblue}}`{{=latex}}{md}`}}`{{=latex}}" if target == "latex" else md
+def colour(md: str) -> str:
+    """Colour a piece of markdown in the PDF."""
+    return f"`{{\\color{{anrblue}}`{{=latex}}{md}`}}`{{=latex}}"
 
 
-def render_group(run: str, keys: list[str], target: str) -> str:
+def render_group(run: str, keys: list[str]) -> str:
     nums = sorted(set(int(n) for n in re.findall(r"\x00C(\d+)\x00", run)))
-    link = lambda n: f"[{colour(str(n), target)}](#ref-{keys[n - 1]})"
+    link = lambda n: f"[{colour(str(n))}](#ref-{keys[n - 1]})"
     parts, i = [], 0
     while i < len(nums):                     # compress 3+ consecutive numbers: 2–4
         j = i
@@ -242,7 +309,21 @@ def load_bib(bib: Path, build: Path) -> dict[str, dict]:
     return {e["id"]: e for e in entries if "id" in e}
 
 
-def format_reference(n: int, key: str, e: dict, target: str) -> str:
+def journal_key(name: str) -> str:
+    """'The Journal of Neuroscience' / 'journal of neuroscience' -> same key."""
+    s = name.lower().replace("&", " and ")
+    s = re.sub(r"^\s*the\s+", "", s)
+    return " ".join(re.sub(r"[^\w\s]", " ", s).split())
+
+
+JOURNAL_LOOKUP = {journal_key(k): v for k, v in JOURNAL_ABBREVIATIONS.items()}
+
+
+def abbreviate_journal(name: str) -> str:
+    return JOURNAL_LOOKUP.get(journal_key(name), name)
+
+
+def format_reference(n: int, key: str, e: dict) -> str:
     """[n] Author et al., *Journal* (Year) Title.   ('Author ... (Year)' links to the DOI)"""
     def name(a):
         if "literal" in a:
@@ -258,7 +339,7 @@ def format_reference(n: int, key: str, e: dict, target: str) -> str:
         who = f"{authors[0]} & {authors[1]}"
     else:
         who = f"{authors[0]} et al."
-    journal = e.get("container-title") or e.get("publisher") or ""
+    journal = abbreviate_journal(e.get("container-title") or e.get("publisher") or "")
     try:
         year = str(e["issued"]["date-parts"][0][0])
     except (KeyError, IndexError, TypeError):
@@ -272,20 +353,18 @@ def format_reference(n: int, key: str, e: dict, target: str) -> str:
     head += f" ({year})"
     doi = e.get("DOI", "").strip()
     url = ("https://doi.org/" + re.sub(r"^https?://(dx\.)?doi\.org/", "", doi)) if doi else e.get("URL", "")
-    head = colour(head, target)
+    head = colour(head)
     if url:
         head = f"[{head}](<{url}>)"
     return f"[**\\[{n}\\]**]{{#ref-{key}}} {head} {md_escape(title)}"
 
 
-def bibliography_block(keys: list[str], bib: dict, target: str) -> str:
-    para = " ".join(format_reference(i + 1, k, bib[k], target) for i, k in enumerate(keys))
-    if target == "latex":
-        return f"\n\n```{{=latex}}\n\\begin{{anrrefs}}\n```\n\n{para}\n\n```{{=latex}}\n\\end{{anrrefs}}\n```\n"
-    return f"\n\n::: {{custom-style=\"Bibliography\"}}\n{para}\n:::\n"
+def bibliography_block(keys: list[str], bib: dict) -> str:
+    para = " ".join(format_reference(i + 1, k, bib[k]) for i, k in enumerate(keys))
+    return f"\n\n```{{=latex}}\n\\begin{{anrrefs}}\n```\n\n{para}\n\n```{{=latex}}\n\\end{{anrrefs}}\n```\n"
 
 
-def build_figures(text: str, md_dir: Path, build: Path, target: str) -> str:
+def build_figures(text: str, md_dir: Path, build: Path) -> str:
     counter = [0]
 
     def sub(m):
@@ -312,18 +391,9 @@ def build_figures(text: str, md_dir: Path, build: Path, target: str) -> str:
             return ""
         cap = " ".join(caption)
         head = re.match(r"\*\*\s*\|\s*", cap)
-        path = prepare_image(img, md_dir, build, target)
-        inner = attrs.strip("{} ")
-
-        if target == "latex":
-            return latex_figure_box(path, fig_label(img), inner,
-                                    ("**" + cap[head.end():]) if head else cap, place)
-
-        # Word: write the number ourselves, pandoc figure with caption
-        cap = (f"**Fig. {n} | " + cap[head.end():]) if head else (f"**Fig. {n}.** " + cap).strip()
-        cap = cap.replace("[", r"\[").replace("]", r"\]")
-        inner = re.sub(r"side\s*=\s*\w+", "", inner).strip()   # natural size unless width given
-        return f"\n\n![{cap}](<{path}>){{{inner}}}\n\n"
+        path = prepare_image(img, md_dir, build)
+        return latex_figure_box(path, fig_label(img), attrs.strip("{} "),
+                                ("**" + cap[head.end():]) if head else cap, place)
 
     return FIG_BLOCK.sub(sub, text)
 
@@ -359,49 +429,40 @@ def latex_figure_box(path: str, label: str, attrs: str, caption: str, place: str
             f"```{{=latex}}\n\\anrfigend\n\\end{{anrfigbox}}\n```\n\n")
 
 
-def prepare_image(img: str, md_dir: Path, build: Path, target: str) -> str:
+def prepare_image(img: str, md_dir: Path, build: Path) -> str:
     src = Path(os.path.expanduser(img))
     if not src.is_absolute():
         src = (md_dir / src).resolve()
     if not src.exists():
         warn(f"Image not found: {img}")
         return str(src)
-    ext = src.suffix.lower()
-    if ext == ".svg":
-        fmt = "pdf" if target == "latex" else "png"
-        dst = build / "figures" / f"{src.stem}.{fmt}"
+    if src.suffix.lower() == ".svg":
+        dst = build / "figures" / f"{src.stem}.pdf"
         dst.parent.mkdir(parents=True, exist_ok=True)
         if dst.exists() and dst.stat().st_mtime >= src.stat().st_mtime:
             return str(dst)
-        if convert_svg(src, dst, fmt):
+        if convert_svg(src, dst):
             return str(dst)
-        if target == "latex":
-            sys.exit(f"Cannot convert {src.name} to PDF. Install librsvg "
-                     "(`brew install librsvg`) or cairosvg (`pip install cairosvg`).")
-        warn(f"No SVG converter found; {src.name} embedded as SVG (fine in recent Word).")
-    elif ext == ".pdf" and target == "docx":
-        warn(f"{src.name}: PDF figures cannot go into Word; export it as PNG or SVG.")
+        sys.exit(f"Cannot convert {src.name} to PDF. Install librsvg "
+                 "(`brew install librsvg`) or cairosvg (`pip install cairosvg`).")
     return str(src)
 
 
-def convert_svg(src: Path, dst: Path, fmt: str) -> bool:
+def convert_svg(src: Path, dst: Path) -> bool:
+    """SVG -> PDF, keeping the SVG's own size."""
     if shutil.which("rsvg-convert"):
-        dpi = ["-d", "300", "-p", "300"] if fmt == "png" else []   # PDF: keep the SVG's own size
-        r = subprocess.run(["rsvg-convert", "-f", fmt, *dpi, "-o", str(dst), str(src)],
+        r = subprocess.run(["rsvg-convert", "-f", "pdf", "-o", str(dst), str(src)],
                            capture_output=True)
         if r.returncode == 0:
             return True
     try:
         import cairosvg  # type: ignore
-        if fmt == "pdf":
-            cairosvg.svg2pdf(url=str(src), write_to=str(dst))
-        else:
-            cairosvg.svg2png(url=str(src), write_to=str(dst), dpi=300, scale=300 / 96)
+        cairosvg.svg2pdf(url=str(src), write_to=str(dst))
         return True
     except Exception:
         pass
     if shutil.which("inkscape"):
-        r = subprocess.run(["inkscape", str(src), f"--export-type={fmt}", "--export-dpi=300",
+        r = subprocess.run(["inkscape", str(src), "--export-type=pdf",
                             f"--export-filename={dst}"], capture_output=True)
         return r.returncode == 0
     return False
@@ -434,7 +495,7 @@ def insert_bibliography(text: str, block: str) -> str:
     return text[: m.end()] + block + rest
 
 
-def preprocess(raw: str, md_dir: Path, build: Path, target: str, bib_override: Path | None):
+def preprocess(raw: str, md_dir: Path, build: Path, bib_override: Path | None):
     meta, _ = extract_preamble(strip_comments(raw))
 
     bib = bib_override or (Path(os.path.expanduser(meta["bibliography"])) if meta.get("bibliography") else None)
@@ -448,29 +509,19 @@ def preprocess(raw: str, md_dir: Path, build: Path, target: str, bib_override: P
 
     text = strip_comments(raw, keep_figure_markers=True)    # commented-out citations are ignored
     figs = scan_figures(text)
-    text = replace_figure_refs(text, figs, target)
-    text, keys = replace_citations(text, set(entries), target)
+    text = replace_figure_refs(text, figs)
+    text, keys = replace_citations(text, set(entries))
     if not entries and re.search(r"\]\([^()\s/]+\.pdf\)", text):
         warn("Citations found but no usable 'Bibliography File': no reference list.")
-    text = build_figures(text, md_dir, build, target)
+    text = build_figures(text, md_dir, build)
     text = strip_comments(text)
     text = re.sub(r"\[\[([^\]|]+)\|([^\]]+)\]\]", r"\2", text)     # [[target|alias]]
     text = re.sub(r"\[\[([^\]]+)\]\]", r"\1", text)                # [[target]]
     _, text = extract_preamble(text)
     text = normalise_headings(text)
     text = re.sub(r"(?<![\w\\`])@", r"\\@", text)   # a literal '@' is never a pandoc citation
-    text = insert_bibliography(text, bibliography_block(keys, entries, target) if keys else "")
+    text = insert_bibliography(text, bibliography_block(keys, entries) if keys else "")
     return meta, text
-
-
-def pandoc_meta(meta: dict, with_title: bool) -> str:
-    def q(s: str) -> str:
-        return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
-
-    lines = ["lang: en-GB"]
-    if with_title and meta.get("title"):
-        lines.append("title: " + q(meta["title"]))
-    return "\n".join(lines) + "\n"
 
 
 # ==========================================================================
@@ -657,7 +708,7 @@ def build_pdf(meta, text, md_dir: Path, build: Path, out: Path) -> Path:
     (build / "anr-preamble.tex").write_text(pre, encoding="utf-8")
     (build / "anr-title.tex").write_text(
         TITLE_BLOCK.replace("<<TITLE>>", field("title", "Title of the project")), encoding="utf-8")
-    (build / "meta.yaml").write_text(pandoc_meta(meta, False), encoding="utf-8")
+    (build / "meta.yaml").write_text("lang: en-GB\n", encoding="utf-8")
     (build / "body.md").write_text(text, encoding="utf-8")
 
     tex = build / (out.stem + ".tex")
@@ -705,155 +756,28 @@ def build_pdf(meta, text, md_dir: Path, build: Path, out: Path) -> Path:
 
 
 # ==========================================================================
-# 3. DOCX target (pandoc -> Word, using the official template)
-# ==========================================================================
-
-W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-NS = {"w": W}
-CAL = '<w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri" w:eastAsia="Calibri"/>'
-ACC = "31849B"
-DOCX_STYLES = {  # styleId: (name, basedOn, pPr, rPr, next)
-    "Normal": ("Normal", None, '<w:widowControl/><w:spacing w:before="0" w:after="0"/><w:jc w:val="left"/>',
-               CAL + '<w:sz w:val="22"/><w:szCs w:val="22"/><w:lang w:val="en-GB"/>', None),
-    "BodyText": ("Body Text", "Normal", '<w:spacing w:before="0" w:after="100"/><w:jc w:val="both"/>', "", None),
-    "FirstParagraph": ("First Paragraph", "BodyText", "", "", "BodyText"),
-    "Compact": ("Compact", "BodyText", '<w:spacing w:before="0" w:after="20"/>', "", None),
-    "Title": ("Title", "Normal", '<w:spacing w:after="160"/><w:jc w:val="center"/>',
-              '<w:b/><w:bCs/><w:sz w:val="28"/><w:szCs w:val="28"/>', "BodyText"),
-    "Heading1": ("heading 1", "Normal",
-                 '<w:keepNext/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr>'
-                 '<w:spacing w:before="200" w:after="100"/><w:ind w:left="714" w:hanging="357"/><w:outlineLvl w:val="0"/>',
-                 f'<w:b/><w:bCs/><w:color w:val="{ACC}"/><w:sz w:val="28"/><w:szCs w:val="28"/>', "BodyText"),
-    "Heading2": ("heading 2", "Normal",
-                 '<w:keepNext/><w:numPr><w:ilvl w:val="1"/><w:numId w:val="1"/></w:numPr>'
-                 '<w:spacing w:before="160" w:after="80"/><w:ind w:left="567" w:hanging="567"/><w:outlineLvl w:val="1"/>',
-                 f'<w:b/><w:bCs/><w:color w:val="{ACC}"/><w:sz w:val="24"/><w:szCs w:val="24"/>', "BodyText"),
-    "Heading3": ("heading 3", "Normal", '<w:keepNext/><w:spacing w:before="120" w:after="60"/><w:outlineLvl w:val="2"/>',
-                 f'<w:b/><w:bCs/><w:i/><w:iCs/><w:color w:val="{ACC}"/>', "BodyText"),
-    "CaptionedFigure": ("Captioned Figure", "Normal",
-                        '<w:keepNext/><w:spacing w:before="120" w:after="40"/><w:jc w:val="center"/>', "", None),
-    "Figure": ("Figure", "Normal", '<w:keepNext/><w:jc w:val="center"/>', "", None),
-    "ImageCaption": ("Image Caption", "Normal", '<w:spacing w:after="160"/><w:jc w:val="both"/>',
-                     '<w:sz w:val="18"/><w:szCs w:val="18"/>', None),
-    "Bibliography": ("Bibliography", "Normal", '<w:spacing w:after="40"/><w:jc w:val="both"/>',
-                     '<w:sz w:val="18"/><w:szCs w:val="18"/>', None),
-    "FootnoteText": ("footnote text", "Normal", "", '<w:sz w:val="18"/><w:szCs w:val="18"/>', None),
-}
-DOCX_PLACEHOLDERS = {
-    "ACRONYM": "acronym", "Instrument": "instrument", "First name SURNAME": "coordinator",
-    "Duration": "duration",
-    "Number and title of the chosen scientific theme (to be found in 2027 AAPG call)": "theme",
-}
-
-
-def build_reference_docx(template: Path, out: Path) -> None:
-    import copy
-    import zipfile
-    from lxml import etree
-
-    with zipfile.ZipFile(template) as z:
-        parts = {n: z.read(n) for n in z.namelist()}
-    root = etree.fromstring(parts["word/styles.xml"])
-    for sid, (name, based, ppr, rpr, nxt) in DOCX_STYLES.items():
-        xml = (f'<w:style xmlns:w="{W}" w:type="paragraph" w:styleId="{sid}"><w:name w:val="{name}"/>'
-               + (f'<w:basedOn w:val="{based}"/>' if based else "")
-               + (f'<w:next w:val="{nxt}"/>' if nxt else "")
-               + f'<w:qFormat/><w:pPr>{ppr}</w:pPr><w:rPr>{rpr}</w:rPr></w:style>')
-        new = etree.fromstring(xml)
-        if based is None:
-            new.set(f"{{{W}}}default", "1")
-        old = root.find(f'w:style[@w:styleId="{sid}"]', NS)
-        if old is not None:
-            if old.find("w:link", NS) is not None:
-                new.insert(1, copy.deepcopy(old.find("w:link", NS)))
-            root.replace(old, new)
-        else:
-            root.append(new)
-    parts["word/styles.xml"] = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
-
-    num = etree.fromstring(parts["word/numbering.xml"])
-    ref = num.find('w:num[@w:numId="1"]/w:abstractNumId', NS)
-    if ref is not None:
-        absn = num.find(f'w:abstractNum[@w:abstractNumId="{ref.get(f"{{{W}}}val")}"]', NS)
-        lvl = absn.find('w:lvl[@w:ilvl="1"]', NS) if absn is not None else None
-        if lvl is not None:
-            absn.replace(lvl, etree.fromstring(
-                f'<w:lvl xmlns:w="{W}" w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="decimal"/>'
-                f'<w:lvlText w:val="%1.%2"/><w:lvlJc w:val="left"/>'
-                f'<w:pPr><w:ind w:left="567" w:hanging="567"/></w:pPr></w:lvl>'))
-    parts["word/numbering.xml"] = etree.tostring(num, xml_declaration=True, encoding="UTF-8", standalone=True)
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-        for n, data in parts.items():
-            z.writestr(n, data)
-
-
-def fill_docx_header(path: Path, meta: dict) -> None:
-    import docx
-
-    doc = docx.Document(str(path))
-    for section in doc.sections:
-        for hdr in (section.header, section.first_page_header, section.even_page_header):
-            if hdr.is_linked_to_previous:
-                continue
-            for table in hdr.tables:
-                seen = set()
-                for row in table.rows:
-                    for cell in row.cells:
-                        key = DOCX_PLACEHOLDERS.get(cell.text.strip())
-                        if cell._tc in seen or not key or not meta.get(key):
-                            continue
-                        seen.add(cell._tc)
-                        runs = [r for p in cell.paragraphs for r in p.runs]
-                        runs[0].text = meta[key].replace(" -- ", " \u2013 ")
-                        for r in runs[1:]:
-                            r._r.getparent().remove(r._r)
-    doc.core_properties.title = meta.get("title", "")
-    doc.core_properties.author = meta.get("coordinator", "")
-    doc.save(str(path))
-
-
-def build_docx(meta, text, md_dir, build, out, template) -> Path:
-    ref = build / "reference.docx"
-    build_reference_docx(template, ref)
-    (build / "meta.yaml").write_text(pandoc_meta(meta, True), encoding="utf-8")
-    (build / "body.md").write_text(text, encoding="utf-8")
-    args = [str(build / "body.md"), "-f", PANDOC_FORMAT, "-t", "docx", "--reference-doc", str(ref),
-            "--metadata-file", str(build / "meta.yaml"), "--dpi=300", "-o", str(out)]
-    run_pandoc(args, md_dir)
-    fill_docx_header(out, meta)
-    return out
-
-
-# ==========================================================================
 # main
 # ==========================================================================
 
-def pdf_pages(pdf: Path) -> int:
-    info = find_tool(["pdfinfo"])
-    if info:
-        m = re.search(r"Pages:\s+(\d+)", subprocess.run([info, str(pdf)], capture_output=True, text=True).stdout)
-        if m:
-            return int(m.group(1))
-    return len(re.findall(rb"/Type\s*/Page(?!s)", pdf.read_bytes()))
+def pdf_pages(build: Path, out: Path) -> int:
+    """Page count from the xelatex log ("Output written on X.pdf (N pages, ...)")."""
+    log = (build / (out.stem + ".log")).read_text(errors="replace")
+    m = re.search(r"Output written on .*?\((\d+) pages?", log, re.S)
+    return int(m.group(1)) if m else 0
 
 
 def export(args) -> None:
     warnings.clear()
     md = args.markdown.resolve()
-    target = "docx" if args.docx else "latex"
-    out = (args.output or md.with_suffix(".docx" if args.docx else ".pdf")).resolve()
-    build = out.parent / f".{out.stem}_build"
+    out = (args.output or md.with_suffix(".pdf")).resolve()
+    build = Path.cwd() / f"{out.stem}_build"
     build.mkdir(exist_ok=True)
 
-    meta, text = preprocess(md.read_text(encoding="utf-8"), md.parent, build, target, args.bib)
-    if target == "docx":
-        build_docx(meta, text, md.parent, build, out, args.template)
-        print(f"Written {out}")
-    else:
-        build_pdf(meta, text, md.parent, build, out)
-        n = pdf_pages(out)
-        print(f"Written {out}  ({n} page{'s' if n > 1 else ''}"
-              f"{', OVER the 4-page limit' if n > 4 else ''})")
+    meta, text = preprocess(md.read_text(encoding="utf-8"), md.parent, build, args.bib)
+    build_pdf(meta, text, md.parent, build, out)
+    n = pdf_pages(build, out)
+    print(f"Written {out}  ({n} page{'s' if n > 1 else ''}"
+          f"{', OVER the 4-page limit' if n > 4 else ''})")
     for w_ in warnings:
         print("  ! " + w_)
 
@@ -861,12 +785,10 @@ def export(args) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("markdown", type=Path)
-    ap.add_argument("-o", "--output", type=Path, help="output file (default: next to the .md)")
-    ap.add_argument("--docx", action="store_true", help="produce the filled Word template instead of a PDF")
-    ap.add_argument("--template", type=Path, default=DEFAULT_TEMPLATE, help="ANR .docx template (--docx)")
+    ap.add_argument("-o", "--output", type=Path, help="output PDF (default: next to the .md)")
     ap.add_argument("--bib", type=Path, help="override the preamble's 'Bibliography File'")
     args = ap.parse_args()
-    for a in ("bib", "output", "template"):   # paths given on the command line: relative to cwd
+    for a in ("bib", "output"):   # paths given on the command line: relative to cwd
         if getattr(args, a) is not None:
             setattr(args, a, getattr(args, a).expanduser().resolve())
     export(args)

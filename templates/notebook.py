@@ -1,16 +1,19 @@
 # %%
 import sys, os
 sys.path += ['physion/src']
-import physion
+from physion.analysis.read_NWB import Data, scan_folder_for_NWBfiles
 
-folder = os.path.expanduser('~/DATA/physion_Demo-Datasets')
-
-dataset, subjects, _ = physion.assembling.dataset.read_spreadsheet(\
-                                    os.path.join(folder, 'PV-WT', 'DataTable.xlsx'))
-
-DS = physion.analysis.read_NWB.scan_folder_for_NWBfiles(\
-                                        os.path.join(folder, 'PV-WT', 'NWBs'))
+folder = os.path.expanduser('~/DATA/physion_Demo-Datasets/Neuropix-WT/')
+dataset = scan_folder_for_NWBfiles(folder)
 
 # %%
-
+data = Data(dataset['files'][0])
+# %%
+data.build_firing()
+# %%
+from physion.analysis.episodes.build import EpisodeData
+ep = EpisodeData(data, quantities=['firing'])
+# %%
+from physion.utils import plot_tools as pt
+pt.plot(ep.t, ep.firing.mean(axis=(0,1)))
 # %%
