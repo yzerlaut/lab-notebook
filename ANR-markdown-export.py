@@ -112,6 +112,7 @@ JOURNAL_ABBREVIATIONS = {
     "Frontiers in Systems Neuroscience": "Front. Syst. Neurosci.",
     "Frontiers in Cellular Neuroscience": "Front. Cell. Neurosci.",
     "Frontiers in Physiology": "Front. Physiol.",
+    "Journal of Comparative Neurology and Psychology": "J. Comp. Neurol. Psychol.",
     # computational neuroscience
     "PLoS Computational Biology": "PLoS Comput. Biol.",
     "Neural Computation": "Neural Comput.",
