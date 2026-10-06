@@ -7,3 +7,6 @@
 [submodule "neural_network_dynamics"]
 	path = neural_network_dynamics
 	url = https://github.com/yzerlaut/neural_network_dynamics
+[submodule "spiking_network_dynamics"]
+	path = spiking_network_dynamics
+	url = https://github.com/yzerlaut/spiking_network_dynamics
