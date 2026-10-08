@@ -3,8 +3,8 @@
 ANR-markdown-export.py: export an Obsidian-flavoured Markdown grant draft to
 a PDF ANR AAPG pre-proposal, laid out like the official template.
 
-    python ANR-markdown-export.py Proposal.md                 # -> Proposal.pdf
-    python ANR-markdown-export.py Proposal.md -o Other.pdf
+    python ANR-Phase-1-markdown-export.py Proposal.md                 # -> Proposal.pdf
+    python ANR-Phase-1-markdown-export.py Proposal.md -o Other.pdf
 
 The LaTeX sources and converted figures are kept in a "<name>_build/" folder
 in the current working directory, so you can inspect or tweak the .tex.
