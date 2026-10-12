@@ -21,9 +21,12 @@ Markdown conventions
 * %% ... %%                 Obsidian comments: removed (inline or multi-line).
 * Preamble "Key: value" lines, before the first heading, fill the header:
       Title, Acronym, Duration, Instrument, Coordinated by, Scientific Theme,
-      Bibliography File (.bib), and optionally Margin (e.g. 2cm) and
+      Bibliography File (.bib), and optionally Margin (e.g. 2cm; left, right
+      and top), Bottom Margin (default 1.3cm, the page number sits 0.6cm
+      below the text) and
       Figure Width (figure boxes relative to the text width, default 1.2:
-      the box sticks out by 10% of the text width into each margin).
+      the box sticks out by 10% of the text width into each margin; corner
+      boxes stick out by as much into their side margin).
 * ## / ### / ####           Top heading level used -> section (I., II., ...),
                             next -> subsection (I.1, I.2, ...), next -> unnumbered.
                             Manual numbers such as "1." are stripped.
@@ -37,7 +40,10 @@ Markdown conventions
       [1] Author et al., *Journal* (Year) Title.
   where "Author et al., Journal (Year)" links to the DOI.
 * %%beginFigure%% ... %%endFigure%%
-      %% location: top %%   optional: force the box to the top (or bottom) of a page
+      %% location: top %%   optional: force the box to the top (or bottom) of a page;
+                            or top-left, top-right, bottom-left, bottom-right:
+                            narrow box (as wide as the image, legend below it)
+                            in that corner of the page, the text flowing around it
       ![](path/fig.svg)     image, at its own size; optionally {side=right}
       **| Short title.** …  legend; numbered automatically ("Fig. 2 | ...")
                             Framed floating box; the legend starts beside
@@ -140,14 +146,15 @@ META_KEYS = {
     "instrument": "instrument", "coordinated by": "coordinator",
     "coordinator": "coordinator", "scientific theme": "theme", "theme": "theme",
     "bibliography file": "bibliography", "bibliography": "bibliography",
-    "margin": "margin", "margins": "margin",
+    "margin": "margin", "margins": "margin", "bottom margin": "bottommargin",
     "figure width": "figwidth",
 }
 
 IMG_EXT = r"(?:svg|png|jpe?g|gif|tiff?|bmp|pdf|eps)"
 FIG_BLOCK = re.compile(r"%%\s*beginFigure\s*%%(.*?)%%\s*endFigure\s*%%", re.S)
-FIG_MARKER = re.compile(r"%%\s*(?:beginFigure|endFigure|location\s*:\s*\w+)\s*%%", re.I)
+FIG_MARKER = re.compile(r"%%\s*(?:beginFigure|endFigure|location\s*:\s*[\w -]+?)\s*%%", re.I)
 PLACEMENT = {"top": "t", "bottom": "b", "here": "h", "page": "p"}
+CORNERS = {"top-left": "tl", "top-right": "tr", "bottom-left": "bl", "bottom-right": "br"}
 
 warnings: list[str] = []
 
@@ -365,19 +372,27 @@ def bibliography_block(keys: list[str], bib: dict) -> str:
     return f"\n\n```{{=latex}}\n\\begin{{anrrefs}}\n```\n\n{para}\n\n```{{=latex}}\n\\end{{anrrefs}}\n```\n"
 
 
+def corner_of(location: str) -> str | None:
+    """'top-left', 'top left', 'Left-Top'... -> 'tl'."""
+    parts = sorted(re.split(r"[\s_-]+", location.lower().strip()), key=lambda p: p not in ("top", "bottom"))
+    return CORNERS.get("-".join(parts))
+
+
 def build_figures(text: str, md_dir: Path, build: Path) -> str:
-    counter = [0]
+    counter = [0, 0]     # figure blocks, figures with an image (= LaTeX's figure number)
 
     def sub(m):
         counter[0] += 1
         n = counter[0]
-        img, attrs, caption, place = None, "", [], ""
+        img, attrs, caption, place, corner = None, "", [], "", None
         for line in (l.strip() for l in m.group(1).strip().splitlines()):
-            loc = re.fullmatch(r"%%\s*location\s*:\s*(\w+)\s*%%", line, re.I)
+            loc = re.fullmatch(r"%%\s*location\s*:\s*([\w -]+?)\s*%%", line, re.I)
             if loc:
-                place = PLACEMENT.get(loc.group(1).lower(), "")
-                if not place:
-                    warn(f"Figure {n}: unknown location '{loc.group(1)}' (use top, bottom, here or page).")
+                corner = corner_of(loc.group(1))
+                place = "" if corner else PLACEMENT.get(loc.group(1).lower(), "")
+                if not (place or corner):
+                    warn(f"Figure {n}: unknown location '{loc.group(1)}' (use top, bottom, here, page, "
+                         "top-left, top-right, bottom-left or bottom-right).")
                 continue
             if not line:
                 continue
@@ -390,13 +405,41 @@ def build_figures(text: str, md_dir: Path, build: Path) -> str:
                 caption.append(line)
         if img is None:
             return ""
+        counter[1] += 1
         cap = " ".join(caption)
         head = re.match(r"\*\*\s*\|\s*", cap)
+        cap = ("**" + cap[head.end():]) if head else cap
         path = prepare_image(img, md_dir, build)
-        return latex_figure_box(path, fig_label(img), attrs.strip("{} "),
-                                ("**" + cap[head.end():]) if head else cap, place)
+        if corner:
+            return latex_corner_box(counter[1], path, fig_label(img), attrs.strip("{} "), cap, corner)
+        return latex_figure_box(path, fig_label(img), attrs.strip("{} "), cap, place)
 
     return FIG_BLOCK.sub(sub, text)
+
+
+def figure_width(attrs: str, ref: str) -> str:
+    """'width=8cm' -> '8cm'; 'width=50%' or 'width=0.5' -> '0.500<ref>'; none -> ''."""
+    w = re.search(r"width\s*=\s*([\d.]+)\s*(%|cm|mm|in|pt)?", attrs)
+    if not w:
+        return ""
+    if (w.group(2) or "%") == "%" and float(w.group(1)) > 1.5:
+        return f"{float(w.group(1)) / 100:.3f}{ref}"
+    if w.group(2) in (None, "%"):
+        return f"{float(w.group(1)):.3f}{ref}"
+    return w.group(1) + w.group(2)
+
+
+def latex_corner_box(n: int, path: str, label: str, attrs: str, caption: str, corner: str) -> str:
+    """Narrow framed box in a page corner: as wide as the image, the legend
+    below it; the text flows around the box. The box is typeset here (and
+    moved to the start of the document); place_corner_figures() puts it in
+    the right corner once the page layout is known. Optional {width=...}.
+    """
+    tex_path = path.replace("\\", "/")
+    begin = f"\\begin{{anrcornerbox}}{{{n}}}{{{tex_path}}}{{{figure_width(attrs, chr(92) + 'textwidth')}}}"
+    legend = f"`\\textbf{{Fig.~{n}\\ |\\ }}`{{=latex}}{caption}"
+    end = f"\\end{{anrcornerbox}}\n\\anrcorneranchor{{{n}}}{{{label}}}{{{corner}}}"
+    return f"\n\n```{{=latex}}\n{begin}\n```\n\n{legend}\n\n```{{=latex}}\n{end}\n```\n\n"
 
 
 def latex_figure_box(path: str, label: str, attrs: str, caption: str, place: str = "") -> str:
@@ -412,15 +455,7 @@ def latex_figure_box(path: str, label: str, attrs: str, caption: str, place: str
     4 cm is left beside it, the legend goes below the image.
     """
     side = "right" if re.search(r"side\s*=\s*r", attrs) else "left"
-    w = re.search(r"width\s*=\s*([\d.]+)\s*(%|cm|mm|in|pt)?", attrs)
-    if not w:
-        width = ""
-    elif (w.group(2) or "%") == "%" and float(w.group(1)) > 1.5:
-        width = f"{float(w.group(1)) / 100:.3f}\\anrinnerw"
-    elif w.group(2) in (None, "%"):
-        width = f"{float(w.group(1)):.3f}\\anrinnerw"
-    else:
-        width = w.group(1) + w.group(2)
+    width = figure_width(attrs, "\\anrinnerw")
     tex_path = path.replace("\\", "/")
     begin = (f"\\anrsetfig{{{tex_path}}}{{{width}}}\n"
              f"\\begin{{anrfigbox}}[height from={{\\anrfigminheight}} to \\textheight"
@@ -565,14 +600,15 @@ PREAMBLE = r"""
 \fancyfoot[R]{\color{anrpage}\footnotesize\thepage}
 \fancypagestyle{plain}{\fancyhf{}\fancyhead[C]{\anrheader}\fancyfoot[R]{\color{anrpage}\footnotesize\thepage}}
 
-% headings: I., II. / I.1, I.2 / unnumbered
+% headings: I., II. / I.1, I.2 / unnumbered (block shape: the default hang shape
+% breaks the text wrapping around corner figures)
 \renewcommand{\thesection}{\Roman{section}}
 \renewcommand{\thesubsection}{\thesection.\arabic{subsection}}
-\titleformat{\section}{\color{anrblue}\bfseries\fontsize{14}{17}\selectfont}{\thesection.}{0.6em}{}
-\titleformat{\subsection}{\color{anrblue}\bfseries\large}{\thesubsection}{0.6em}{}
-\titleformat{\subsubsection}{\color{anrblue}\bfseries\itshape\normalsize}{}{0em}{}
+\titleformat{\section}[block]{\color{anrblue}\bfseries\fontsize{13}{16}\selectfont}{\thesection.}{0.6em}{}
+\titleformat{\subsection}[block]{\color{anrblue}\bfseries\large}{\thesubsection}{0.6em}{}
+\titleformat{\subsubsection}[block]{\color{anrblue}\bfseries\itshape\normalsize}{}{0em}{}
 \titleformat{\paragraph}[runin]{\bfseries\itshape\normalsize}{}{0em}{}[.]
-\titlespacing*{\section}{0pt}{10pt plus 2pt minus 2pt}{4pt plus 1pt}
+\titlespacing*{\section}{0pt}{7pt plus 2pt minus 1pt}{4pt plus 1pt}
 \titlespacing*{\subsection}{0pt}{8pt plus 2pt minus 2pt}{3pt plus 1pt}
 \titlespacing*{\subsubsection}{0pt}{6pt plus 2pt minus 1pt}{2pt}
 
@@ -580,8 +616,9 @@ PREAMBLE = r"""
 \DeclareCaptionLabelSeparator{anrpipe}{\textbf{\ |\ }}
 \captionsetup[figure]{name=Fig., labelfont=bf, labelsep=anrpipe, font=footnotesize,
   justification=justified, singlelinecheck=false, skip=4pt}
-\setlength{\textfloatsep}{10pt plus 2pt minus 2pt}
-\setlength{\floatsep}{8pt plus 2pt minus 2pt}
+\setlength{\textfloatsep}{6pt plus 2pt minus 2pt}
+\setlength{\floatsep}{6pt plus 2pt minus 2pt}
+\setlength{\intextsep}{6pt plus 2pt minus 2pt}
 
 % figures: framed floating box; the image keeps its natural size and the
 % legend starts beside it, then continues below it (done with \hangindent,
@@ -651,10 +688,63 @@ PREAMBLE = r"""
 TITLE_BLOCK = r"""
 \thispagestyle{fancy}
 \begin{center}
-{\fontsize{14}{17}\selectfont\bfseries <<TITLE>>\par}
+% the invisible strut makes the first line 0.1cm taller: 0.1cm more above the title
+{\fontsize{14}{17}\selectfont\bfseries \rule{0pt}{\dimexpr\topskip+0.1cm\relax}<<TITLE>>\par}
 \end{center}
 \suppressfloats[t]
 \vspace{2pt}
+"""
+
+CORNER_PREAMBLE = r"""
+% ---------- corner figures (only when the document has some) ----------
+% The boxes are typeset at the start of the document; the script then puts
+% each one in place with a wrapstuff environment, at the line found from the
+% positions recorded by the \anrPs / \anrPe paragraph markers.
+\usepackage{wrapstuff}
+\usepackage{zref-savepos,zref-abspage}
+\makeatletter\zref@addprop{savepos}{abspage}\makeatother
+\newsavebox{\anrcornertmp}
+% #1: figure number, #2: file, #3: optional width (empty = natural size)
+\newenvironment{anrcornerbox}[3]{%
+  \gdef\anrcornerid{#1}%
+  \if\relax\detokenize{#3}\relax\sbox{\anrimgbox}{\includegraphics{#2}}%
+  \else\sbox{\anrimgbox}{\includegraphics[width=#3]{#2}}\fi
+  \ifdim\wd\anrimgbox>0.6\textwidth
+    \sbox{\anrimgbox}{\includegraphics[width=0.6\textwidth]{#2}}\typeout{ANRWIDE #1}\fi
+  \begin{lrbox}{\anrcornertmp}%
+  \begin{tcolorbox}[enhanced, width=\dimexpr\wd\anrimgbox+2\anrboxpad+1.2pt\relax,
+    colback=white, colframe=anrblue, boxrule=0.6pt, arc=2pt, boxsep=0pt,
+    left=\anrboxpad, right=\anrboxpad, top=\anrboxpad, bottom=\anrboxpad,
+    before upper={\setlength{\parskip}{0pt}\setlength{\parindent}{0pt}\footnotesize\justifying}]%
+  \usebox{\anrimgbox}\par\vspace{4pt}}
+ {\end{tcolorbox}\end{lrbox}%
+  \expandafter\newsavebox\csname anrcorner@\anrcornerid\endcsname
+  \expandafter\global\expandafter\setbox\csname anrcorner@\anrcornerid\endcsname\box\anrcornertmp
+  \typeout{ANRCORNER \anrcornerid\space\the\wd\csname anrcorner@\anrcornerid\endcsname
+    \space\the\ht\csname anrcorner@\anrcornerid\endcsname
+    \space\the\dp\csname anrcorner@\anrcornerid\endcsname}}
+% where the figure block was in the text: numbers the figure, records the page
+\newcommand{\anrcorneranchor}[3]{\ifhmode\unskip\fi\refstepcounter{figure}\label{#2}\zsavepos{anrA-#1}}
+% #2: l or r = stick out into that margin like the full-width boxes (Figure Width), c = no
+\newcommand{\anrcornerput}[2]{\hbox{\if#2l\hskip-\anrfigextra\fi\zsavepos{anrC-#1}%
+  \usebox{\csname anrcorner@#1\endcsname}\if#2r\hskip-\anrfigextra\fi}}
+% paragraph and list markers, page geometry
+\newcommand{\anrPs}[1]{\leavevmode\zsavepos{anrPs-#1}}
+\newcommand{\anrPe}[1]{\unskip\zsavepos{anrPe-#1}\par}
+\newcommand{\anrW}[1]{\zsavepos{anrW-#1}}
+\newcommand{\anrLs}[1]{\zsavepos{anrLs-#1}}
+\newcommand{\anrLe}[1]{\zsavepos{anrLe-#1}}
+\newcommand{\anrgeom}{\typeout{ANRGEOM \the\paperheight\space
+  \the\dimexpr1in+\voffset+\topmargin+\headheight+\headsep\relax\space
+  \the\textheight\space\the\topskip\space\the\baselineskip\space\the\ht\strutbox\space
+  \the\anrfigextra}}
+% wrapstuff cannot wrap real lists: those next to a corner box become paragraphs
+\newcounter{anrflat}
+\newcommand{\anrflathang}{\hangindent=1.5em\hangafter=1 }   % ignored beside the box
+\newenvironment{anrflatitemize}{\par\def\tightlist{}%
+  \renewcommand\item[1][\textbullet]{\par\noindent\anrflathang\makebox[1.5em][l]{##1}}}{\par}
+\newenvironment{anrflatenumerate}{\par\def\tightlist{}\setcounter{anrflat}{0}%
+  \renewcommand\item{\par\noindent\anrflathang\stepcounter{anrflat}\makebox[1.5em][l]{\arabic{anrflat}.}}}{\par}
 """
 
 
@@ -687,6 +777,339 @@ def run_pandoc(args: list[str], cwd: Path) -> None:
             warn("pandoc: " + line.strip())
 
 
+def run_xelatex(xelatex: str, build: Path, tex: Path) -> tuple[int, str]:
+    env = dict(os.environ, max_print_line="10000")     # no wrapped lines in the log
+    r = subprocess.run([xelatex, "-interaction=nonstopmode", "-halt-on-error", tex.name],
+                       cwd=build, capture_output=True, text=True, env=env)
+    logf = build / (tex.stem + ".log")
+    return r.returncode, logf.read_text(errors="replace") if logf.exists() else r.stdout
+
+
+# ==========================================================================
+# 3. Corner figures: placed by measuring the page layout
+# ==========================================================================
+
+CORNER_BOX = re.compile(r"\\begin\{anrcornerbox\}.*?\\end\{anrcornerbox\}\n?", re.S)
+CORNER_ANCHOR = re.compile(r"\\anrcorneranchor\{(\d+)\}\{[^}]*\}\{([tb])([lr])\}")
+NOT_PAR = re.compile(r"%|\{\\fontsize|\\(?:begin|end|(?:sub)*section|(?:sub)?paragraph\b|anr|item\b|tightlist"
+                     r"|def\b|hypertarget|label|thispagestyle|suppressfloats|vspace|centering|noindent"
+                     r"|newpage|clearpage|pagebreak|bigskip|medskip|smallskip|par\b|setcounter)")
+HEADING = re.compile(r"\\(?:(?:sub)*section|(?:sub)?paragraph)\*?\{|\\label\{|\\hypertarget\{")
+LIST_ENV = re.compile(r"\\(begin|end)\{(itemize|enumerate)\}")
+
+
+def instrument(body: str) -> str:
+    """Mark the body paragraphs (\\anrPs{i} ... \\anrPe{i}), their words
+    (\\anrW{...}) and the top-level lists (\\anrLs{j} ... \\anrLe{j}) so
+    their positions can be measured."""
+    out: list[str] = []
+    lines = body.split("\n")
+    depth = npar = nlist = 0
+    cur_list = None
+    i = 0
+    while i < len(lines):
+        if not lines[i].strip():
+            out.append(lines[i])
+            i += 1
+            continue
+        j = i
+        while j < len(lines) and lines[j].strip():
+            j += 1
+        block = lines[i:j]
+        if depth == 0 and not NOT_PAR.match(block[0].lstrip()) \
+                and not any("\\begin{" in l or "\\end{" in l for l in block):
+            npar += 1
+            text = mark_words(f"\\anrPs{{{npar}}}" + "\n".join(block) + f"\n\\anrPe{{{npar}}}", npar)
+            out += text.split("\n")
+        else:
+            for line in block:
+                m = LIST_ENV.match(line.strip())
+                if m and m.group(1) == "begin" and depth == 0:
+                    nlist += 1
+                    cur_list = nlist
+                    out.append(f"\\anrLs{{{nlist}}}")
+                out.append(line)
+                depth += line.count("\\begin{") - line.count("\\end{")
+                if m and m.group(1) == "end" and depth == 0 and cur_list:
+                    out.append(f"\\anrLe{{{cur_list}}}")
+                    cur_list = None
+        i = j
+    return "\n".join(out)
+
+
+class Layout:
+    """Positions (in pt, from the bottom of the page) read from the .aux/.log."""
+
+    def __init__(self, build: Path, stem: str, log: str):
+        aux = (build / f"{stem}.aux").read_text(errors="replace")
+        self.pos: dict[str, tuple[int, float]] = {}
+        for m in re.finditer(r"\\zref@newlabel\{(anr\w+-\d+)\}\{(.*)\}\s*$", aux, re.M):
+            p = dict(re.findall(r"\\(posy|abspage)\{(-?\d+)\}", m.group(2)))
+            if "posy" in p and "abspage" in p:
+                self.pos[m.group(1)] = (int(p["abspage"]), int(p["posy"]) / 65536)
+        self.paragraphs = sorted(int(l[6:]) for l in self.pos if l.startswith("anrPs-"))
+        self.words: dict[int, list] = {}           # paragraph -> [(word, (page, y))]
+        for label, v in self.pos.items():
+            if label.startswith("anrW-"):
+                w = int(label[5:])
+                self.words.setdefault(w // 10000, []).append((w, v))
+        for ws in self.words.values():
+            ws.sort()
+        self.box = {int(n): (float(w), float(h), float(d)) for n, w, h, d in
+                    re.findall(r"^ANRCORNER (\d+) ([\d.]+)pt ([\d.]+)pt ([\d.]+)pt$", log, re.M)}
+        self.wide = set(int(n) for n in re.findall(r"^ANRWIDE (\d+)$", log, re.M))
+        g = [float(x) for x in re.search(r"^ANRGEOM (.*)$", log, re.M).group(1).replace("pt", "").split()]
+        paper, top, textheight, self.topskip, self.bs, self.strut, self.figextra = g
+        self.texttop = paper - top
+        self.textbottom = self.texttop - textheight
+
+    def lines(self) -> list[tuple[int, int, int, float]]:
+        """Every line of the marked paragraphs, in reading order:
+        (paragraph, line, page, baseline y), from the measured word positions."""
+        out = []
+        for i in self.paragraphs:
+            marks = [v for _, v in self.words.get(i, [])] + [self.pos[f"anrPs-{i}"]]
+            if f"anrPe-{i}" in self.pos:
+                marks.append(self.pos[f"anrPe-{i}"])
+            pts = {(pg, round(y)) for pg, y in marks}          # one point per line
+            for k, (pg, y) in enumerate(sorted(pts, key=lambda p: (p[0], -p[1]))):
+                out.append((i, k, pg, float(y)))
+        return sorted(out, key=lambda l: (l[2], -l[3]))
+
+
+def mark_words(body: str, i: int) -> str:
+    """Put a position marker after each word of paragraph i (outside braces,
+    math and comments): gives the page of each line, and the word where a
+    page break falls."""
+    a = body.index(f"\\anrPs{{{i}}}") + len(f"\\anrPs{{{i}}}")
+    b = body.index(f"\\anrPe{{{i}}}", a)
+    seg, out, k, t, depth, math = body[a:b], [], 0, 0, 0, False
+    while k < len(seg):
+        c = seg[k]
+        if c == "\\":
+            out.append(seg[k:k + 2])
+            k += 2
+            continue
+        if c == "%":                                 # comment: copy to the end of the line
+            e = seg.find("\n", k)
+            e = len(seg) if e < 0 else e
+            out.append(seg[k:e])
+            k = e
+            continue
+        depth += (c == "{") - (c == "}")
+        math ^= c == "$"
+        prev = "".join(out[-40:])
+        if c.isspace() and depth == 0 and not math and prev and not prev[-1].isspace() \
+                and not re.search(r"\\[A-Za-z]+$", prev):   # a space after \cs is not a space
+            t += 1
+            out.append(f"\\anrW{{{i * 10000 + t}}}")
+        out.append(c)
+        k += 1
+    return body[:a] + "".join(out) + body[b:]
+
+
+def split_paragraph(body: str, i: int, word: int, new: int) -> str:
+    """Split paragraph i after the word marked `word`: the first part ends
+    with a full line (as before), the rest becomes paragraph `new`."""
+    m = f"\\anrW{{{word}}}"
+    a = body.index(m) + len(m)
+    end = f"\\anrPe{{{i}}}"
+    e = body.index(end, a)
+    rest = re.sub(r"\\anrW\{(\d+)\}", lambda m: f"\\anrW{{{new * 10000 + int(m.group(1)) % 10000}}}",
+                  body[a:e].lstrip())
+    return (body[:a] + f"{{\\parfillskip=0pt{end}}}\n\n\\anrPs{{{new}}}" + rest
+            + f"\\anrPe{{{new}}}" + body[e + len(end):])
+
+
+def place_corner_figures(src: str, build: Path, tex: Path, xelatex: str) -> str:
+    """Put each corner box at the line where it lands in its page corner.
+
+    Compile, read where every paragraph line fell, start the wrap at the first
+    line of the page (top) or at the line that makes the box end at the bottom
+    of the text (bottom), then recompile and adjust by whole lines until the
+    box sits in place. Lists beside a box are turned into plain paragraphs.
+    """
+    head, body = src.split("\\begin{document}\n", 1)
+    boxes = "".join(m.group(0) for m in CORNER_BOX.finditer(body))
+    body = instrument(CORNER_BOX.sub("", body))
+    # anything between paragraphs ends a wrap: put the anchors inside the
+    # paragraph just before (or else just after) them
+    anchor = r"\\anrcorneranchor\{\d+\}\{[^}]*\}\{[tb][lr]\}"
+    body = re.sub(rf"(\\anrPe\{{\d+\}})\n(\s*\n)*({anchor})\n", r"\3\1\n", body)
+    body = re.sub(rf"^({anchor})\n(\s*\n)*(\\anrPs\{{\d+\}})", r"\3\1", body, flags=re.M)
+    head = head.replace("\\begin{document}", "") + "\\begin{document}\n" + boxes + "\\anrgeom\n"
+    corners = [(int(m.group(1)), m.group(3), m.group(2)) for m in CORNER_ANCHOR.finditer(body)]  # (n, side, vert)
+    placed: dict[int, tuple] = {}         # figure -> (paragraph, line, newpage) or None (float)
+    flat: set[int] = set()
+
+    def render() -> str:
+        text = body
+        for j in flat:
+            a, b = text.index(f"\\anrLs{{{j}}}"), text.index(f"\\anrLe{{{j}}}")
+            flat_list = re.sub(r"\\(begin|end)\{(itemize|enumerate)\}", r"\\\1{anrflat\2}", text[a:b])
+            text = text[:a] + flat_list.replace(f"\\anrLs{{{j}}}", "") + text[b:].replace(f"\\anrLe{{{j}}}", "", 1)
+        for n, side, vert in corners:
+            if n not in placed:
+                continue
+            if placed[n] is None:
+                env = (f"\\begin{{figure}}[{vert}]\\centering\\leavevmode\\anrcornerput{{{n}}}{{c}}\\par\\end{{figure}}\n")
+                at = text.index(f"\\anrcorneranchor{{{n}}}")
+            else:
+                i, k, newpage = placed[n]
+                w = lay0.box[n][0] - lay0.figextra    # the rest sticks out into the margin
+                sep = "leftsep=0pt, rightsep=8pt" if side == "l" else "leftsep=8pt, rightsep=0pt"
+                env = ("\\newpage\n" if newpage else "") + (f"\\begin{{wrapstuff}}[{side}, width={w:.2f}pt, top={k}, {sep}, belowsep=2pt, column=false]\n"
+                       f"\\anrcornerput{{{n}}}{{{side}}}\n\\end{{wrapstuff}}\n")
+                at = text.index(f"\\anrPs{{{i}}}")
+                if k == 0 and vert == "t":    # a heading just above: start the box with it
+                    pre = text[:at].split("\n")
+                    m = len(pre) - 1
+                    while m > 0 and (not pre[m - 1].strip() or HEADING.match(pre[m - 1].lstrip())):
+                        m -= 1
+                    while m < len(pre) - 1 and not HEADING.match(pre[m].lstrip()):
+                        m += 1
+                    at = len("\n".join(pre[:m])) + (1 if m else 0)
+            text = text[:at] + env + text[at:]
+        return head + text
+
+    def compile_() -> Layout | None:
+        tex.write_text(render(), encoding="utf-8")
+        code, log = run_xelatex(xelatex, build, tex)
+        return None if code else Layout(build, tex.stem, log)
+
+    lay0 = lay = compile_()
+    if lay is None:
+        return render()                       # let the normal run report the error
+    for n in lay.wide:
+        warn(f"Fig. {n} (corner) is wider than 60% of the text: scaled down.")
+
+    where_is: dict[int, tuple] = {}       # placed figure -> (page, y) of its box
+    for n, side, vert in corners:
+        _, ht, dp = lay.box[n]
+        H = ht + dp
+        P = lay.pos[f"anrA-{n}"][0]
+        body_before, flat_before = body, set(flat)
+        lines = lay.lines()
+        on_page = [l for l in lines if l[2] == P]
+        if not on_page:
+            warn(f"Fig. {n}: no text on its page to wrap around; placed as a {vert}-float instead.")
+            placed[n] = None
+            lay = compile_() or lay
+            continue
+        if vert == "t":
+            target = on_page[0]
+            i, k = target[:2]
+            wrapped_above = any(placed.get(m) and v == "b" and where_is[m][0] == P - 1
+                                for m, _, v in corners if m in where_is)
+            if k > 0 and wrapped_above:
+                # that paragraph runs beside a box at the bottom of the previous
+                # page: start at the first paragraph beginning on this page
+                target = next((l for l in on_page if l[1] == 0), target)
+            elif k > 0:
+                # the page starts inside a paragraph, where wrapstuff cannot start
+                # a box: split the paragraph at the word where the page breaks
+                words = lay.words.get(i, [])
+                last = [w for w, (pg, _) in words if pg < P]
+                if last and last[-1] != words[-1][0]:
+                    split_id = 100_000 + n
+                    body = split_paragraph(body, i, last[-1], split_id)
+                    new = compile_()
+                    first = [l for l in new.lines() if l[:2] == (split_id, 0)] if new else []
+                    if first and first[0][2] == P:
+                        lay, target = new, first[0]
+                    else:
+                        body = body_before
+            bottom = target[3] + lay.strut - H
+        else:
+            fit = [l for l in on_page if l[3] + lay.strut - H >= lay.textbottom - 1]
+            target = fit[-1] if fit else on_page[0]
+            bottom = lay.textbottom
+        # wrapstuff fails on lists: flatten those that may end up beside the box
+        for j in range(1, 10_000):
+            if f"anrLs-{j}" not in lay.pos:
+                break
+            pg, y = lay.pos[f"anrLs-{j}"]
+            if (target[2], -target[3]) < (pg, -y) < (P, -(bottom - lay.bs)):
+                flat.add(j)
+
+        best, tried, good = None, set(), None     # good: last key that compiled
+        lines = lay.lines()
+        for _ in range(6):
+            # a box starting a page: break the page first, or wrapstuff measures
+            # the room left on the previous page and ends the wrap too early
+            first_on_p = next((l for l in lines if l[2] == P), None)
+            key = target[:2] + (vert == "t" and first_on_p is not None and target[:2] == first_on_p[:2],)
+            if key in tried:
+                break
+            tried.add(key)
+            placed[n] = key
+            new = compile_()
+            if new is None:                       # most likely a list beside the box
+                flat.update(j for j in range(1, 10_000) if f"anrLs-{j}" in lay.pos
+                            and lay.pos[f"anrLs-{j}"][0] in (P, P + 1))
+                new = compile_()
+                if new is None:
+                    break
+            lay, good = new, key
+            new_lines = lay.lines()
+            if any(l[:2] == key[:2] for l in new_lines):
+                lines = new_lines
+            idx = next(m for m, l in enumerate(lines) if l[:2] == key[:2])
+            if f"anrC-{n}" not in lay.pos:        # wrapstuff lost the box
+                delta = 1 if vert == "t" else -1
+            else:
+                pb, yb = lay.pos[f"anrC-{n}"]
+                top, bot = yb + ht, yb - dp
+                if vert == "t":
+                    want = next((m for m, l in enumerate(lines) if l[2] == P), idx)
+                    ok = pb == P
+                    done = ok and idx <= want
+                    score = top
+                    if pb < P:
+                        delta = int((top - lay.textbottom) / lay.bs) + 1
+                    elif pb > P:
+                        delta = -1
+                    else:
+                        delta = want - idx
+                else:
+                    ok = pb == P and bot >= lay.textbottom - 2
+                    done = ok and bot <= lay.textbottom + 0.9 * lay.bs
+                    score = -bot
+                    if pb < P:
+                        delta = int((top - lay.textbottom) / lay.bs) + 1
+                    elif pb > P:                  # wrapstuff found no room for it
+                        delta = -1
+                    elif bot < lay.textbottom - 2:
+                        delta = -max(1, int((lay.textbottom - bot) // lay.bs) + 1)
+                    else:
+                        delta = max(1, int((bot - lay.textbottom) / lay.bs))
+                if ok and (best is None or score > best[0]):
+                    best = (score, key)
+                if done:
+                    break
+            target = lines[max(0, min(len(lines) - 1, idx + delta))]
+
+        placed[n] = best[1] if best else None
+        if best is None:
+            where = ("top" if vert == "t" else "bottom") + "-" + ("left" if side == "l" else "right")
+            warn(f"Fig. {n}: could not place it in the {where} corner; placed as a {vert}-float instead.")
+        if placed[n] != good:
+            lay = compile_() or lay
+        # placing this box must not move the ones already placed
+        moved = [m for m in where_is if placed.get(m) and (f"anrC-{m}" not in lay.pos or
+                 lay.pos[f"anrC-{m}"][0] != where_is[m][0] or abs(lay.pos[f"anrC-{m}"][1] - where_is[m][1]) > 2)]
+        if moved and placed[n] is not None:
+            warn(f"Fig. {n}: its corner placement disturbs Fig. {moved[0]}; placed as a {vert}-float instead.")
+            body = body_before
+            flat.clear()
+            flat.update(flat_before)
+            placed[n] = None
+            lay = compile_() or lay
+        if f"anrC-{n}" in lay.pos:
+            where_is[n] = lay.pos[f"anrC-{n}"]
+    return render()
+
+
 def build_pdf(meta, text, md_dir: Path, build: Path, out: Path) -> Path:
     def field(k, default):
         v = meta.get(k)
@@ -705,7 +1128,10 @@ def build_pdf(meta, text, md_dir: Path, build: Path, out: Path) -> Path:
         warn(f"'Figure Width: {meta['figwidth']}' is not a number: using 1.2.")
         figwidth = 1.2
     pre = pre.replace("<<FIGWIDTH>>", f"{figwidth:.3f}")
+    if "\\begin{anrcornerbox}" in text:
+        pre += CORNER_PREAMBLE
     margin = meta.get("margin", "2.5cm")
+    bottom = meta.get("bottommargin", "1.3cm")
     (build / "anr-preamble.tex").write_text(pre, encoding="utf-8")
     (build / "anr-title.tex").write_text(
         TITLE_BLOCK.replace("<<TITLE>>", field("title", "Title of the project")), encoding="utf-8")
@@ -717,8 +1143,8 @@ def build_pdf(meta, text, md_dir: Path, build: Path, out: Path) -> Path:
             "--metadata-file", str(build / "meta.yaml"),
             "-H", str(build / "anr-preamble.tex"), "-B", str(build / "anr-title.tex"),
             "-V", "documentclass=article", "-V", "fontsize=11pt", "-V", "papersize=a4",
-            "-V", f"geometry=a4paper,left={margin},right={margin},bottom={margin},"
-                  f"top=\\dimexpr{margin}+0.75cm\\relax,headheight=1.75cm,headsep=0.4cm,footskip=0.9cm",
+            "-V", f"geometry=a4paper,left={margin},right={margin},bottom={bottom},"
+                  f"top=\\dimexpr{margin}+0.5cm\\relax,headheight=1.75cm,headsep=0.1cm,footskip=0.6cm",
             "-V", "numbersections", "-V", "secnumdepth=2",
             "-V", "colorlinks", "-V", "linkcolor=black", "-V", "citecolor=black",
             "-V", "urlcolor=anrblue",
@@ -734,14 +1160,15 @@ def build_pdf(meta, text, md_dir: Path, build: Path, out: Path) -> Path:
         sys.exit(f"xelatex not found (install MacTeX or BasicTeX). The LaTeX source is in {tex}")
     pdf = build / (out.stem + ".pdf")
     logf = build / (out.stem + ".log")
+    src = tex.read_text(encoding="utf-8")
+    if "\\begin{anrcornerbox}" in src:
+        tex.write_text(place_corner_figures(src, build, tex, xelatex), encoding="utf-8")
     pdf.unlink(missing_ok=True)
     for _ in range(3):   # re-run until cross-references are stable
-        r = subprocess.run([xelatex, "-interaction=nonstopmode", "-halt-on-error", tex.name],
-                           cwd=build, capture_output=True, text=True)
-        log = logf.read_text(errors="replace") if logf.exists() else r.stdout
-        if r.returncode or not re.search(r"Rerun to get|Label\(s\) may have changed", log):
+        code, log = run_xelatex(xelatex, build, tex)
+        if code or not re.search(r"Rerun to get|Label\(s\) may have changed", log):
             break
-    if r.returncode or not pdf.exists():
+    if code or not pdf.exists():
         errors = "\n".join(l for l in log.splitlines() if l.startswith("!")) or log[-2000:]
         sys.exit(f"LaTeX failed (full log: {logf}):\n{errors}")
     if "ANR-NOFONT" in log:
