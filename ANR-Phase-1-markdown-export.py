@@ -51,6 +51,9 @@ Markdown conventions
                             if less than 4 cm is left beside the image).
 * [Fig.](path/fig.svg), [Fig.b](path/fig.svg)
                             Cross-reference -> "Fig. 2", "Fig. 2b".
+* ==text==                  A paragraph or a line that is entirely highlighted
+                            goes in a light gray box; highlights within a line
+                            get a light gray background.
 * An empty "References" heading receives the bibliography (added at the end
   if there is no such heading).
 * Journal names in the reference list are abbreviated with JOURNAL_ABBREVIATIONS
@@ -139,7 +142,8 @@ PANDOC_FORMAT = ("markdown"
                  "-blank_before_header"
                  "+lists_without_preceding_blankline"
                  "+implicit_figures"
-                 "-auto_identifiers")
+                 "-auto_identifiers"
+                 "+mark")
 
 META_KEYS = {
     "title": "title", "acronym": "acronym", "duration": "duration",
@@ -518,6 +522,18 @@ def normalise_headings(text: str) -> str:
     return re.sub(r"^(#{1,6})\s+(.*)$", sub, text, flags=re.M)
 
 
+def highlight_boxes(text: str) -> str:
+    """A paragraph, or a line, that is entirely ==highlighted== goes in a light
+    gray box; shorter ==highlights== within a line get a gray background
+    (pandoc's mark extension)."""
+    def box(content: str) -> str:
+        return (f"\n\n```{{=latex}}\n\\begin{{anrhighlight}}\n```\n\n`\\strut{{}}`{{=latex}}{content.strip()}`\\strut{{}}`{{=latex}}"
+                f"\n\n```{{=latex}}\n\\end{{anrhighlight}}\n```\n\n")
+    text = re.sub(r"(^|\n\s*\n)==((?:(?!==|\n\s*\n).)+?)==[ \t]*(?=\n\s*\n|\n?$)",
+                  lambda m: box(m.group(2)), text, flags=re.S)              # whole paragraph
+    return re.sub(r"^[ \t]*==((?:(?!==).)+)==[ \t]*$", lambda m: box(m.group(1)), text, flags=re.M)  # whole line
+
+
 def insert_bibliography(text: str, block: str) -> str:
     if not block:
         return text
@@ -551,6 +567,7 @@ def preprocess(raw: str, md_dir: Path, build: Path, bib_override: Path | None):
         warn("Citations found but no usable 'Bibliography File': no reference list.")
     text = build_figures(text, md_dir, build)
     text = strip_comments(text)
+    text = highlight_boxes(text)
     text = re.sub(r"\[\[([^\]|]+)\|([^\]]+)\]\]", r"\2", text)     # [[target|alias]]
     text = re.sub(r"\[\[([^\]]+)\]\]", r"\1", text)                # [[target]]
     _, text = extract_preamble(text)
@@ -676,6 +693,15 @@ PREAMBLE = r"""
   \else\anrfigbelow\fi}
 \newcommand{\anrfignum}[1]{\refstepcounter{figure}\label{#1}\textbf{Fig.~\thefigure\ |\ }}
 \newcommand{\anrfigend}{\par}
+
+% ==highlighted== paragraphs: light gray box; inline highlights: gray background
+\definecolor{anrhl}{gray}{0.9}
+% (the padding is taken from the space between paragraphs: no extra vertical space)
+\newtcolorbox{anrhighlight}{breakable, colback=anrhl, frame hidden, boxrule=0pt, arc=2pt,
+  left=4pt, right=4pt, top=1.5pt, bottom=1.5pt, boxsep=0pt,
+  before skip balanced=-1.5pt, after skip balanced=\dimexpr\parskip-1.5pt\relax,
+  before upper={\setlength{\parskip}{4pt}\setlength{\parindent}{0pt}}}
+\AtBeginDocument{\ifdefined\sethlcolor\sethlcolor{anrhl}\fi}
 
 % reference list: one running paragraph (link colour set in the text itself)
 \newenvironment{anrrefs}{\par\footnotesize\justifying\hypersetup{urlcolor=black}}{\par}
@@ -843,10 +869,12 @@ class Layout:
     def __init__(self, build: Path, stem: str, log: str):
         aux = (build / f"{stem}.aux").read_text(errors="replace")
         self.pos: dict[str, tuple[int, float]] = {}
+        self.x: dict[str, float] = {}
         for m in re.finditer(r"\\zref@newlabel\{(anr\w+-\d+)\}\{(.*)\}\s*$", aux, re.M):
-            p = dict(re.findall(r"\\(posy|abspage)\{(-?\d+)\}", m.group(2)))
+            p = dict(re.findall(r"\\(posx|posy|abspage)\{(-?\d+)\}", m.group(2)))
             if "posy" in p and "abspage" in p:
                 self.pos[m.group(1)] = (int(p["abspage"]), int(p["posy"]) / 65536)
+                self.x[m.group(1)] = int(p.get("posx", 0)) / 65536
         self.paragraphs = sorted(int(l[6:]) for l in self.pos if l.startswith("anrPs-"))
         self.words: dict[int, list] = {}           # paragraph -> [(word, (page, y))]
         for label, v in self.pos.items():
@@ -921,6 +949,23 @@ def split_paragraph(body: str, i: int, word: int, new: int) -> str:
             + f"\\anrPe{{{new}}}" + body[e + len(end):])
 
 
+def overlaps(lay: "Layout", n: int, side: str) -> bool:
+    """Does a word of the text end up under corner box n?"""
+    if f"anrC-{n}" not in lay.pos:
+        return False
+    w, ht, dp = lay.box[n]
+    pg, y = lay.pos[f"anrC-{n}"]
+    left = lay.x[f"anrC-{n}"]
+    right = left + w
+    for label, (p, yw) in lay.pos.items():
+        if not label.startswith("anrW-") or p != pg or not (y - dp - 3 < yw + lay.strut and yw < y + ht):
+            continue
+        xw = lay.x[label]                     # the end of the word
+        if (side == "r" and xw > left + 1) or (side == "l" and left < xw < right - 1):
+            return True
+    return False
+
+
 def place_corner_figures(src: str, build: Path, tex: Path, xelatex: str) -> str:
     """Put each corner box at the line where it lands in its page corner.
 
@@ -941,6 +986,7 @@ def place_corner_figures(src: str, build: Path, tex: Path, xelatex: str) -> str:
     corners = [(int(m.group(1)), m.group(3), m.group(2)) for m in CORNER_ANCHOR.finditer(body)]  # (n, side, vert)
     placed: dict[int, tuple] = {}         # figure -> (paragraph, line, newpage) or None (float)
     flat: set[int] = set()
+    extend: dict[int, int] = {}           # figure -> extra lines of wrap (see overlaps())
 
     def render() -> str:
         text = body
@@ -958,7 +1004,7 @@ def place_corner_figures(src: str, build: Path, tex: Path, xelatex: str) -> str:
                 i, k, newpage = placed[n]
                 w = lay0.box[n][0] - lay0.figextra    # the rest sticks out into the margin
                 sep = "leftsep=0pt, rightsep=8pt" if side == "l" else "leftsep=8pt, rightsep=0pt"
-                env = ("\\newpage\n" if newpage else "") + (f"\\begin{{wrapstuff}}[{side}, width={w:.2f}pt, top={k}, {sep}, belowsep=2pt, column=false]\n"
+                env = ("\\newpage\n" if newpage else "") + (f"\\begin{{wrapstuff}}[{side}, width={w:.2f}pt, top={k}, {sep}, belowsep={2 + extend.get(n, 0) * lay0.bs:.1f}pt, column=false]\n"
                        f"\\anrcornerput{{{n}}}{{{side}}}\n\\end{{wrapstuff}}\n")
                 at = text.index(f"\\anrPs{{{i}}}")
                 if k == 0 and vert == "t":    # a heading just above: start the box with it
@@ -1094,6 +1140,13 @@ def place_corner_figures(src: str, build: Path, tex: Path, xelatex: str) -> str:
             where = ("top" if vert == "t" else "bottom") + "-" + ("left" if side == "l" else "right")
             warn(f"Fig. {n}: could not place it in the {where} corner; placed as a {vert}-float instead.")
         if placed[n] != good:
+            lay = compile_() or lay
+        # wrapstuff counts lines, not the room taken by headings or paragraph
+        # skips: if the text still runs into the box, extend the wrap
+        for _ in range(4):
+            if placed[n] is None or not overlaps(lay, n, side):
+                break
+            extend[n] = extend.get(n, 0) + 1
             lay = compile_() or lay
         # placing this box must not move the ones already placed
         moved = [m for m in where_is if placed.get(m) and (f"anrC-{m}" not in lay.pos or
