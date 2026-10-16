@@ -235,7 +235,9 @@ def calibrate(make_pair, pairs, s_grid, v1):
     # normalized V1 similarity: 0 at s=0, 1 at s=1, forced monotonic
     v1_mean = calib['v1'].mean(0)
     v1_norm = np.maximum.accumulate((v1_mean - v1_mean[0]) / (v1_mean[-1] - v1_mean[0]))
-    v1_norm += 1e-6 * np.arange(len(s_grid))   # strictly increasing (flat parts -> lowest s)
+    # strictly increasing (flat parts -> lowest s), still 0 at s=0 and 1 at s=1
+    ramp = 1e-6 * np.arange(len(s_grid))
+    v1_norm = (v1_norm + ramp) / (1 + ramp[-1])
 
     def calibrated_s(s_target):
         """ raw morph similarity giving a normalized V1-model similarity = s_target """
