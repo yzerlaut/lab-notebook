@@ -1,0 +1,197 @@
+PHYSION -- REMAINING BUGS AND WORK TO DO
+========================================
+(written 2026-09-25, after the refactoring session; last physion commit: 725eb29)
+
+Section A: bugs already fixed, but the data built with them must be redone.
+Sections B-C: problems found during the session, not fixed yet.
+Paths are relative to physion/src/physion/.
+Run the tests with:  cd physion && pip install -e ".[test]" && pytest
+
+
+------------------------------------------------------------------
+A. DATA TO CHECK / REBUILD  (can affect existing results)
+------------------------------------------------------------------
+
+A1. Rebuild the NWB files of the 11 sessions with "forced realignement"
+    (fixed in commit c799449)
+    The "realignement_*_forced" keys of metadata.json / metadata.npy were
+    ignored. In 2023_02_17/16-15-09, episode 0 (no photodiode signal) was
+    detected at the onset of episode 1, so in the old NWB file every episode
+    had the stimulus parameters of the previous one (and 57/163 episodes
+    were missing).
+      Taddy/SST-WT/Orient-Tuning/processed/
+          2023_02_15/13-30-47   2023_02_15/15-10-04
+          2023_02_17/16-15-09   2023_02_17/17-39-12
+      Taddy/SST-cond-GluN1KO/Orient-Tuning/processed/
+          2023_02_15/11-53-39   2023_02_15/16-40-50   2023_02_15/18-05-25
+          2023_02_17/14-35-39   2023_02_17/19-21-51
+      Taddy/SST-GluN3KO/Orient-Tuning/processed/
+          2023_01_12/18-47-40   2023_01_12/21-01-10
+    -> rebuild them, then check whether Taddy's orientation-tuning results
+       used these files.
+
+A2. NWB files built with excluded episodes (--exclude_episodes, or the
+    "exclude_episodes" column of the DataTable)
+    Fixed in c799449: after an excluded episode, every episode had the
+    parameters and the duration of the previous one, and the last episode
+    was dropped. -> rebuild any NWB file built with excluded episodes.
+
+A3. PYR-WT demo NWB is truncated
+    physion_Demo-Datasets/PYR-WT/2025_11_14-13-54-32.nwb: all signals (dFoF,
+    running, pupil, facemotion, photodiode) stop at ~130 s while the stimuli
+    go to 2878 s -> only 17/474 episodes usable. Fine if deliberate (small
+    demo), but it is a weak test file.
+
+
+------------------------------------------------------------------
+B. BUGS IN THE GUI
+------------------------------------------------------------------
+
+B1. Retinotopic maps: shape mismatch
+    intrinsic/analysis.py, IntrinsicWindow.compute_retinotopic_maps
+    On physion_Demo-Datasets/PV-WT/retinotopic_mapping/PVTOM_BB_5:
+      ValueError: operands could not be broadcast together with shapes
+      (64,80) (128,160)
+    Probably two maps computed at different spatial resolutions
+    (spatial subsampling of one of them). Phase maps and area segmentation
+    run fine.
+
+B2. Calendar: scanning a folder with compressed-imaging NWB files fails
+    gui/calendar.py, CalendarWindow.scan_folder
+    On physion_Demo-Datasets/PYR-WT:
+      ValueError: invalid literal for int() with base 10: 'Ch2'
+    The ".nwb" files of the "nwb-xxx/" folders (compressed 2P data, e.g.
+    nwb-11142025-001/Ch2-Green-plane0.nwb) are parsed as session files
+    (date from the file name). -> skip the folders of
+    physion.imaging.folders (compressed_folder / "nwb-" prefix), or only
+    take the files named like sessions.
+
+B3. Raw-data window: "faceMotionContour" is never created
+    dataviz/gui.py, VisualizationWindow.init_panel_imgs / init_image_panels
+    uses self.faceMotionContour, but the panel code creates
+    self.whiskContour (probably the same thing renamed) -> AttributeError
+    when these functions run.
+
+B4. Whisker maps (somatosensory intrinsic): two versions of the same functions
+    intrinsic/SS_analysis.py keeps its own copies of 11 functions of
+    intrinsic/analysis.py (set_pixROI, moved_pixels, update_img, update_img1,
+    update_img2, update_imgButtons, reset, show_raw_data, get_datafolder,
+    pdf_intrinsic, get_pixel_value). The buttons of the window use the
+    retinotopy versions, but the SS functions calling them directly use the
+    SS copies. 3 copies differ:
+      - update_img: the retinotopy version also handles phase maps
+      - show_raw_data: different spectrum computation
+      - pdf_intrinsic: the SS version adds "--output <folder>/<subject>.pdf"
+    -> decide which versions the window should use, delete the others.
+    (This behaviour was kept exactly as it was.)
+
+B5. Retinotopy: ROI "remove" action
+    intrinsic/analysis.py: self.ROI.sigRemoveRequested.connect(
+    lambda: self.remove(self)) -> no "remove" method (AttributeError when
+    removing the ROI from its context menu).
+
+B6. Retinotopy used a box of the Ocular-Dominance window
+    add_gui_shift_to_images reads self.phaseMapShiftBox, only created by the
+    OD analysis window (its creation is commented out in the retinotopy
+    window). It now always takes the "no shift" path (error message
+    "Pb with altitude, azimuth shift"). -> recreate the box in the
+    retinotopy window if the shift is still needed, or remove this code.
+
+B7. Ocular dominance: calc_OD reads threshBox / ipsiBox, whose creation is
+    commented out (its button is commented out too: dead code for now).
+
+B8. Space shortcut opens "Build NWBs from DataTable"
+    gui/main.py, MainWindow.hitting_space: a debug leftover. In every tab
+    without its own [Space] action, pressing Space opens that window.
+
+B9. 2P conversion window: the "rm raw ?" checkbox does nothing
+    utils/compression/twoP.py: it is not connected to any code. (To delete
+    the tiffs after conversion, use Convert-TSeries-to-h5.py in yann/.)
+
+B10. Episodes of some 2022 NWB files cannot be built
+    EpisodeData fails on:
+      Yann/VIP-CB1-OctNovDec-2022/2022_10_26-17-08-32.nwb and 18-05-07
+      Marcel/SST-TdTomato-December-2022/2022_11_28-13-38-54.nwb and 13-49-06
+        -> "2 indexing arguments for 1 dimensions" /
+           "Use other code for boolean selection on 1D dataset"
+           (1D stimulus datasets in old files, 2D "(n,1)" expected)
+      Adrianna/conversion-ABF+TSeries-to-NWB/... -> KeyError 'time_start'
+    and two files cannot be loaded at all:
+      Yann/Pyr-FlexiCortPrelim-FebJuly-2022/2022_03_07-16-06-07.nwb, 2022_03_16-16-21-18.nwb
+        -> KeyError 'CaImaging-TimeSeries'
+    (continuation of the "backward-compatibility" work)
+
+B11. Pupil fit vs saved pupil.npy
+    The fit of the pupil window differs by a few pixels from the stored
+    pupil.npy of the demo session, even with the same settings (smoothing,
+    reflectors). Most likely the imprecise frame reading in .wmv videos
+    (physion warns about it); worth a check with a binary/converted movie.
+
+
+------------------------------------------------------------------
+C. CODE QUALITY (lower priority)
+------------------------------------------------------------------
+
+C1. ~45 broad "except BaseException:" / bare "except:" remain, in:
+    GUI and plotting code (dataviz, gui/parts.py, calendar, FOV...),
+    intrinsic windows, hardware scripts, utils/compression, and 17 bare
+    "except:" in intrinsic/RetinotopicMapping.py (adapted third-party code,
+    better left as is). Same method as for analysis/, assembling/, imaging/:
+    catch the specific exceptions, keep "except Exception" only for the
+    "keep going" fallbacks.
+
+C2. Logging: only physion.utils.camera uses the logging module. The ~1100
+    print() could move to module loggers progressively (start with library
+    code: analysis, assembling, imaging).
+
+C3. Hardware scripts (hardware/): still use sys.path hacks and import a
+    "hardware_control" package that no longer exists (NIdaq/steps.py,
+    NIdaq/zero_AO.py, NIdaq/inputs_for_screen.py, Igor/igor.py,
+    RaspberryPi/main.py, toupcam/qt5.py). To be checked on the rigs.
+
+C4. utils/hdf5.py imports the old "analyz" package and is not used anywhere
+    -> delete, or port.
+
+C5. ~775 lines of commented-out code (to review: some are notes /
+    alternatives).
+
+C6. Acquisition windows (acquisition/gui.py, intrinsic/acquisition.py, OD
+    acquisition in intrinsic/ocular_dominance.py) are still functions bound
+    to the main window. Not a problem today (one window per acquisition
+    app), but they could become physion.gui.window.Window classes too -- to
+    be done with the rigs available for testing.
+
+C7. read_NWB.Data: the has_X / build_X methods repeat the same code
+    (resampling, "not available" messages) ~12 times -> a common helper.
+    Safety net: compare old/new on many NWB files (as done for the
+    exceptions: 44 files, identical results).
+
+C8. utils/files.get_TSeries_folders still accepts log8bit-/lossless-
+    folders (used by transfer, deletion, add_ophys, ephys, snapshot). If
+    these formats are abandoned, simplify it with physion.imaging.folders.
+
+C9. convert_to_h5 & co (utils/compression) and the root script
+    yann/Convert-TSeries-to-h5.py overlap: the script (verification +
+    deletion) could become the implementation used by the GUI (the
+    "rm raw ?" checkbox, see B9).
+
+
+------------------------------------------------------------------
+D. HOUSEKEEPING
+------------------------------------------------------------------
+
+D1. Nothing was pushed: physion's main is 18 commits ahead of origin/main.
+    The GitHub Actions workflow (.github/workflows/tests.yml) has never run:
+    check it on the first push (Qt system libraries).
+D2. Before the next PyPI release: delete the local physion/build/ folder
+    (git-ignored, but "pip wheel ." reused stale files from it, e.g. the
+    old utils/matplotlib_style.py).
+D3. New installs need "pip install physion[ephys]" for spike sorting and
+    the ephys/CSD notebooks (see README).
+D4. yann/: Convert-TSeries-to-h5.py is not committed; the "physion"
+    submodule pointer of the yann repo is not updated.
+D5. Uncommitted work of yours left untouched in physion: launch.sh,
+    assembling/dataset.py, assembling/nwb.py (exclude_episodes),
+    utils/misc.py (parse_int_list), notebooks/Multipanel-Figure.py,
+    ephys/LFP/build.py. The exclude_episodes block in nwb.py got one line
+    from the fix of A2 ("episode_indices = np.delete(...)"), keep it.
