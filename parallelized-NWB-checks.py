@@ -109,7 +109,7 @@ if 1:
 
 ## %s
 ![](figures/%s.svg) 
-- [ ] keep as is
+- [ ] keep until:
 - [ ] remove
 - [ ] realign using photodiode 
     - [ ] **reverse**
