@@ -34,7 +34,7 @@ fig = func('')
 if 1:
     for folder in folders:
         dataset = scan_folder_for_NWBfiles(\
-                        os.path.join(root_folder, folder),
+                        os.path.join(root_folder, folder, 'NWBs'),
                         add_filenames_on_script=False)
         text = ''
         for fn in dataset['files']:
@@ -62,11 +62,11 @@ def plot_and_save(fn):
     pt.plt.close(fig)
     return fn
 
-if 0:
+if 1:
     filenames = []
     for folder in folders:
         dataset = scan_folder_for_NWBfiles(\
-                        os.path.join(root_folder, folder),
+                        os.path.join(root_folder, folder, 'NWBs'),
                         add_filenames_on_script=False)
         filenames += list(dataset['files'])
 
