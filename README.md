@@ -13,6 +13,16 @@ This will:
     (e.g.  `archive/2025-10-06-18:54:11-the-script-you-want-to-back-up`)
 - perform a `git add` and `git commit` to this repository 
 
+It also works with a whole folder of scripts:
+
+```
+python archive.py Medicine-Programming-Projects/
+```
+
+The folder is copied (without `__pycache__` or `.ipynb_checkpoints`) as
+`_archives/2025/10-October/07-Tuesday-09.09.59-Medicine-Programming-Projects/`
+and all its files are committed together.
+
 
 ### 2) Recover
 
@@ -39,4 +49,9 @@ _archives
 You can recover the file you want with:
 ```
 python archive.py _archives/2025/October/09-Thursday-19:39:22-anr-SST-vs-NDNF.py
+```
+
+and an archived folder the same way (it is copied back as `./Medicine-Programming-Projects/`):
+```
+python archive.py _archives/2025/10-October/07-Tuesday-09.09.59-Medicine-Programming-Projects/
 ```
