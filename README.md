@@ -1,5 +1,73 @@
 # Laboratory Notebook
 
+## Setup (with `uv`)
+
+A Python 3.14 environment in `.venv/` at the root of the repository, with `physion` installed in editable mode (changes in `physion/src` apply without reinstalling).
+
+1. Install `uv` (once per machine):
+    ```
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    ```
+    (or `brew install uv`)
+
+2. Get the repository with its submodules (`physion`, `utils/...`):
+    ```
+    git clone --recurse-submodules https://github.com/yzerlaut/lab-notebook
+    cd lab-notebook
+    ```
+    (in an existing clone: `git submodule update --init --recursive`)
+
+3. Create the environment (`uv` downloads Python 3.14 if needed):
+    ```
+    uv venv --python 3.14
+    ```
+
+4. Install `physion` in editable mode:
+    ```
+    uv pip install -e ./physion
+    ```
+    with the optional dependencies of `physion/pyproject.toml` as needed, e.g.:
+    ```
+    uv pip install -e "./physion[ephys,test]"
+    ```
+    (extras: `ephys`, `acquisition`, `diffusion`, `test`)
+
+5. Use it, either by activating the environment:
+    ```
+    source .venv/bin/activate
+    python my-script.py
+    ```
+    or without activating it, from the repository folders:
+    ```
+    uv run python my-script.py
+    ```
+    [!!] not from inside `physion/`: there `uv run` finds `physion/pyproject.toml` and
+    creates a separate `physion/.venv` (activate the environment instead)
+6. VS Code (with the repository root as workspace folder):
+    - the Interactive Window and notebooks need `ipykernel` in the environment:
+        ```
+        uv pip install ipykernel
+        ```
+    - Cmd+Shift+P -> "Python: Select Interpreter" -> `.venv/bin/python`
+        (if not listed: "Enter interpreter path..." -> `./.venv/bin/python`)
+    - in the Interactive Window or a notebook: kernel picker (top right)
+        -> "Python Environments" -> `.venv`
+    - default of the workspace, already set in `.vscode/settings.json` (tracked in git):
+        ```json
+        {
+            "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+            "python.terminal.activateEnvironment": true
+        }
+        ```
+        (the second line activates `.venv` in each new VS Code terminal)
+    - check, in a cell: `import sys; print(sys.executable)` -> `.../lab-notebook/.venv/bin/python`
+
+To check the installation:
+```
+uv run python -c "import physion; print(physion.__file__)"
+```
+(should print a path in `physion/src/physion/`)
+
 ## Usage
 
 ### 1) Archive
