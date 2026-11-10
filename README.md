@@ -123,3 +123,33 @@ and an archived folder the same way (it is copied back as `./Medicine-Programmin
 ```
 python archive.py _archives/2025/10-October/07-Tuesday-09.09.59-Medicine-Programming-Projects/
 ```
+
+### 3) Sync to OneDrive
+
+`utils/bash/onedrive_sync.py` mirrors each subfolder of `~/Documents/Lab-Notebook`
+to the folder of the same name in `Lab-Notebook` on OneDrive, without the OneDrive
+app (it uses [rclone](https://rclone.org)).
+
+Setup (once per machine):
+```
+brew install rclone        # or: sudo apt install rclone / winget install Rclone.Rclone
+rclone config              # n -> name "onedrive" -> Microsoft OneDrive -> log in
+                           #   -> OneDrive Business (ICM account)
+```
+
+Usage:
+```
+python utils/bash/onedrive_sync.py -n               # dry run (show what would be done)
+python utils/bash/onedrive_sync.py                  # sync every subfolder
+python utils/bash/onedrive_sync.py Grants Projects  # sync only these subfolders
+```
+
+- one-way (here -> OneDrive): a file that is newer on OneDrive is never overwritten
+- files deleted here are removed from OneDrive, but moved to
+  `Lab-Notebook/.sync-trash/<date_time>/<subfolder>/` on OneDrive
+- not synced: hidden folders (`.obsidian`, `.git`, ...) and files at the top level of
+  the Lab-Notebook; git material and system files (`.DS_Store`, ...) are skipped everywhere
+- other locations: `--src <local folder>`, `--remote <rclone remote>`, `--dest <OneDrive folder>`
+
+If the login in `rclone config` asks for admin approval, the institution blocks rclone
+for this account: ask IT to allow it.
