@@ -31,7 +31,7 @@
 # ---------------------------------------------------------------------------
 
 LAPTOP="${LAPTOP:-yann@macbook}"                                 # (ssh config)
-LAPTOP_VAULT="${LAPTOP_VAULT:-OneDrive - ICM/Lab-Notebook}"      # relative to the laptop's ~
+LAPTOP_VAULT="${LAPTOP_VAULT:-Documents/Notebook}"      # relative to the laptop's ~
 IPAD_VAULT="${IPAD_VAULT:-/mnt/Lab-Notebook}"
 STATE="${STATE:-$HOME/.ipad_sync.state}"
 
