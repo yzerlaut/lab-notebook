@@ -32,7 +32,7 @@
 
 LAPTOP="${LAPTOP:-yann@macbook}"                                 # (ssh config)
 LAPTOP_VAULT="${LAPTOP_VAULT:-Documents/Notebook}"      # relative to the laptop's ~
-IPAD_VAULT="${IPAD_VAULT:-/mnt/Lab-Notebook}"
+IPAD_VAULT="${IPAD_VAULT:-/mnt/Notebook}"
 STATE="${STATE:-$HOME/.ipad_sync.state}"
 
 # the whole vault is synced, restricted to these extensions (empty = all files)
