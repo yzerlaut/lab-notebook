@@ -15,11 +15,22 @@
 # file of that name anywhere in the Lab-Notebook) is copied to Daily-Notes/
 # and linked under "to synch" in the daily note.
 # -n = dry run (show what would be done).
-# Works in bash and zsh.
+# Works in bash and zsh, on macOS and Linux.
+# On Linux (no OneDrive app), the Lab-Notebook is ~/Documents/Lab-Notebook:
+# get the OneDrive edits first with `python utils/onedrive/sync.py --pull`,
+# and send yours back afterwards with `python utils/onedrive/sync.py`.
 # ---------------------------------------------------------------------------
 
-NOTES_REPO="$HOME/Documents/Research/private-notes"
-NOTES_SRC="$HOME/OneDrive - ICM/Lab-Notebook"
+NOTES_REPO="${NOTES_REPO:-$HOME/Documents/Research/private-notes}"
+# Lab-Notebook: the OneDrive app folder (macOS) if present, otherwise the local
+# copy kept in sync with OneDrive by utils/onedrive/sync.py (Linux workstation)
+if [ -z "$NOTES_SRC" ]; then
+    if [ -d "$HOME/OneDrive - ICM/Lab-Notebook" ]; then
+        NOTES_SRC="$HOME/OneDrive - ICM/Lab-Notebook"
+    else
+        NOTES_SRC="$HOME/Documents/Lab-Notebook"
+    fi
+fi
 NOTES_DAILY_DIR="Daily-Notes"      # relative to NOTES_SRC
 NOTES_SECTION="to synch"           # heading that holds the list
 

@@ -15,12 +15,46 @@
 #   Daily-Notes/2026-10-05.md   <->  Work/2026-10-05.md
 # -n = dry run (show what would be copied).
 # Works in bash and zsh.
+# macOS only in practice: it needs the iCloud Drive folder, which does not
+# exist on Linux. From the Linux workstation, sync the iPad with ipad_sync.sh
+# (run in iSH on the iPad) instead.
 # ---------------------------------------------------------------------------
 
-OBS_ONEDRIVE="$HOME/OneDrive - ICM/Lab-Notebook"
-OBS_ICLOUD="$HOME/Library/Mobile Documents/iCloud~md~obsidian/Documents/Perso/Work"
+# OneDrive app folder (macOS) if present, otherwise the local rclone copy (Linux)
+if [ -z "$OBS_ONEDRIVE" ]; then
+    if [ -d "$HOME/OneDrive - ICM/Lab-Notebook" ]; then
+        OBS_ONEDRIVE="$HOME/OneDrive - ICM/Lab-Notebook"
+    else
+        OBS_ONEDRIVE="$HOME/Documents/Lab-Notebook"
+    fi
+fi
+OBS_ICLOUD="${OBS_ICLOUD:-$HOME/Library/Mobile Documents/iCloud~md~obsidian/Documents/Perso/Work}"
 OBS_DAILY_DIR="Daily-Notes"        # relative to the OneDrive root
 OBS_SECTION="to synch"             # heading that holds the list
+
+# both vaults must exist (no iCloud Drive on Linux)
+_obs_check() {
+    [ -d "$OBS_ONEDRIVE" ] || { echo "obs: Lab-Notebook not found: $OBS_ONEDRIVE" >&2; return 1; }
+    [ -d "$OBS_ICLOUD" ] || {
+        echo "obs: iCloud vault not found: $OBS_ICLOUD" >&2
+        echo "     (no iCloud Drive on Linux: use ipad_sync.sh from iSH on the iPad)" >&2
+        return 1; }
+}
+
+# move <path> to the desktop Trash: ~/.Trash (macOS), the freedesktop Trash
+# via gio (Linux), else ~/.local/share/Trash/files
+_obs_trash() {
+    local name dest dir
+    name=$(basename "$1")
+    if [ "$(uname)" != Darwin ] && command -v gio >/dev/null 2>&1; then
+        gio trash -- "$1"; return
+    fi
+    if [ "$(uname)" = Darwin ]; then dir="$HOME/.Trash"; else dir="$HOME/.local/share/Trash/files"; fi
+    mkdir -p "$dir" || return 1
+    dest="$dir/$name"
+    [ -e "$dest" ] && dest="$dir/${name%.md} $(date +%H.%M.%S)${name##"${name%.md}"}"
+    mv "$1" "$dest"
+}
 
 # Collapse "a/b/../c/./d" -> "a/c/d" (lexical, no filesystem access).
 # Prints nothing if the path escapes the root.
@@ -67,6 +101,7 @@ _obs_run() {
         esac
     done
 
+    _obs_check || return 1
     rel_note="$OBS_DAILY_DIR/$day.md"
     od="$OBS_ONEDRIVE/$rel_note"
     ic="$OBS_ICLOUD/$day.md"
@@ -114,7 +149,7 @@ obs_sync() { obs_pull "$@" && obs_push "$@"; }
 # Items are moved to the Trash after confirmation. An old daily note edited on
 # the iPad and not yet pulled back to OneDrive is kept.
 obs_clean() {
-    local day dry="" arg note keep list entry name od ans dest n=0
+    local day dry="" arg note keep list entry name od ans n=0
     day=$(date +%F)
     for arg in "$@"; do
         case "$arg" in
@@ -124,6 +159,7 @@ obs_clean() {
         esac
     done
 
+    _obs_check || return 1
     if   [ -f "$OBS_ICLOUD/$day.md" ]; then note="$OBS_ICLOUD/$day.md"
     elif [ -f "$OBS_ONEDRIVE/$OBS_DAILY_DIR/$day.md" ]; then note="$OBS_ONEDRIVE/$OBS_DAILY_DIR/$day.md"
     else echo "obs: no daily note for $day in either vault, nothing cleaned" >&2; return 1
@@ -160,9 +196,7 @@ obs_clean() {
     case "$ans" in y|Y|yes) ;; *) echo "== aborted"; return 1 ;; esac
 
     while IFS= read -r name; do
-        dest="$HOME/.Trash/$name"
-        [ -e "$dest" ] && dest="$HOME/.Trash/${name%.md} $(date +%H.%M.%S)${name##"${name%.md}"}"
-        mv "$OBS_ICLOUD/$name" "$dest" && n=$((n + 1))
+        _obs_trash "$OBS_ICLOUD/$name" && n=$((n + 1))
     done <<EOF
 $list
 EOF

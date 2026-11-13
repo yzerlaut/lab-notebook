@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-OneDrive sync: ~/Documents/Lab-Notebook  ->  OneDrive Lab-Notebook (via rclone)
+OneDrive sync: ~/Documents/Lab-Notebook  <->  OneDrive Lab-Notebook (via rclone)
 
-    python sync.py                  sync every subfolder
+    python sync.py                  sync every subfolder (here -> OneDrive)
     python sync.py Grants Projects  sync only these subfolders
     python sync.py -n               dry run (show what would be done)
+    python sync.py --pull           get the OneDrive changes (OneDrive -> here)
 
 Each subfolder of ~/Documents/Lab-Notebook is mirrored to the folder of the
 same name in "Lab-Notebook" on OneDrive, without the OneDrive app:
@@ -15,6 +16,12 @@ same name in "Lab-Notebook" on OneDrive, without the OneDrive app:
   - hidden folders (.obsidian, .git, ...) and files at the top level of the
     Lab-Notebook are not synced; git material and system files are skipped
     everywhere
+
+With --pull, the other direction, for a computer without the OneDrive app
+(e.g. the Linux workstation; also to fill a new local copy): the subfolders of
+OneDrive:Lab-Notebook are copied here, only new files and files that are newer
+on OneDrive (rclone copy --update). Nothing is ever deleted locally.
+Typical session: sync.py --pull, work, sync.py.
 
 Other locations: --src, --remote, --dest (see common.py for the defaults).
 """
@@ -65,17 +72,57 @@ def sync_folder(folder, root, stamp, dry_run):
     return subprocess.run(cmd).returncode == 0
 
 
+def pull(src, names, root, dry_run):
+    """
+    Copy OneDrive -> src (new or newer files only, no deletion), for the given
+    subfolders or all the non-hidden ones. Returns the failed folder names.
+    """
+    cmd = ["rclone", "copy", "--update", "--create-empty-src-dirs",
+           "--stats-one-line", "--stats", "0", "-v"]
+    for pattern in EXCLUDES:
+        cmd += ["--exclude", pattern]
+    if dry_run:
+        cmd.append("--dry-run")
+    if not names:
+        print(f"\n=== {root}  ->  {src}", flush=True)
+        # top-level files and hidden folders (.sync-trash, .obsidian, ...) skipped
+        ok = subprocess.run(cmd + ["--exclude", "/*", "--exclude", "/.*/**",
+                                   root, str(src)]).returncode == 0
+        return [] if ok else ["(all)"]
+    failed = []
+    for name in names:
+        print(f"\n=== {root}/{name}  ->  {src / name}", flush=True)
+        if subprocess.run(cmd + [f"{root}/{name}", str(src / name)]).returncode:
+            failed.append(name)
+    return failed
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Mirror the subfolders of the local Lab-Notebook to OneDrive.")
+        description="Mirror the subfolders of the local Lab-Notebook to OneDrive "
+                    "(or get the OneDrive changes with --pull).")
     parser.add_argument("folders", nargs="*",
                         help="subfolders to sync (default: all)")
     parser.add_argument("--src", type=Path, default=SRC,
                         help=f"local Lab-Notebook (default: {SRC})")
+    parser.add_argument("--pull", action="store_true",
+                        help="OneDrive -> here: copy new/newer files, delete nothing")
     add_common_args(parser)
     args = parser.parse_args()
 
     check_rclone(SCRIPT, args.remote)
+    if args.pull:
+        src = args.src.expanduser()
+        if not args.dry_run:
+            src.mkdir(parents=True, exist_ok=True)
+        failed = pull(src, args.folders, remote_root(args.remote, args.dest),
+                      args.dry_run)
+        print()
+        if failed:
+            fail(SCRIPT, f"pull failed for {', '.join(failed)}")
+        print(f"{SCRIPT}: {'dry run done' if args.dry_run else 'pull done'}")
+        return
+
     folders = subfolders(args.src.expanduser(), args.folders)
     stamp = datetime.datetime.now().strftime(TIMESTAMP_FORMAT)
     root = remote_root(args.remote, args.dest)

@@ -1,6 +1,8 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# Two-way sync of the Obsidian vault: iPad (iSH)  <->  laptop, without rsync
+# Two-way sync of the Obsidian vault: iPad (iSH)  <->  server, without rsync
+#   (server = the lab Linux workstation "lab-server"; any ssh host works,
+#    e.g. the former MacBook: SERVER=yann@macbook sh ipad_sync.sh)
 #
 #   sh ipad_sync.sh [-n]        (run in iSH; -n = dry run, show the plan only)
 #
@@ -25,13 +27,19 @@
 #   first sync (no state): a file present on both sides with the same size is
 #   considered identical, otherwise treated as a conflict.
 #
-# Needs in iSH: openssh-client (ssh keys to the laptop), and a tar supporting
+# Needs in iSH: openssh-client (ssh keys to the server), and a tar supporting
 # -T (busybox tar does; otherwise `apk add tar`). The vault must be mounted:
-#   mount -t ios . /mnt/Lab-Notebook      (pick the Obsidian vault folder)
+#   mount -t ios . /mnt/Notebook          (pick the Obsidian vault folder)
+# The iPad must reach the server over ssh (same network / VPN as the lab), with
+# in iSH's ~/.ssh/config:
+#   Host lab-server
+#       HostName <IP or DNS name of the workstation>
+#       User yann
+# The server can be Linux (GNU stat/tar) or macOS (BSD stat/tar).
 # ---------------------------------------------------------------------------
 
-LAPTOP="${LAPTOP:-yann@macbook}"                                 # (ssh config)
-LAPTOP_VAULT="${LAPTOP_VAULT:-Documents/Notebook}"      # relative to the laptop's ~
+SERVER="${SERVER:-${LAPTOP:-yann@lab-server}}"            # ssh host (LAPTOP: old name)
+SERVER_VAULT="${SERVER_VAULT:-${LAPTOP_VAULT:-Documents/Notebook}}"   # relative to the server's ~
 IPAD_VAULT="${IPAD_VAULT:-/mnt/Notebook}"
 STATE="${STATE:-$HOME/.ipad_sync.state}"
 
@@ -47,7 +55,7 @@ TRASH=".sync-trash/$(date +%Y-%m-%d_%H.%M.%S)"
 _q() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 
 # shell script printing "mtime size path" for the synced files of vault $1
-# (piped to `sh` locally or on the laptop, works with GNU/busybox and BSD stat)
+# (piped to `sh` locally or on the server, works with GNU/busybox and BSD stat)
 _list_script() {
     printf 'cd %s || exit 1\n' "$(_q "$1")"
     printf 'if stat -c %%Y . >/dev/null 2>&1; then fmt="-c"; f="%%Y %%s %%n"; else fmt="-f"; f="%%m %%z %%N"; fi\n'
@@ -80,12 +88,12 @@ EOF
     echo "__SYNC_LIST__"
 }
 
-_list_laptop() { _list_script "$LAPTOP_VAULT" | $SSH "$LAPTOP" sh; }
+_list_server() { _list_script "$SERVER_VAULT" | $SSH "$SERVER" sh; }
 _list_ipad()   { _list_script "$IPAD_VAULT" | sh; }
 
-# _plan <state> <laptop list> <ipad list>: prints "ACTION<tab>path", with
+# _plan <state> <server list> <ipad list>: prints "ACTION<tab>path", with
 # ACTION in PULL, PUSH (copy), DEL_L, DEL_I (delete), CONF_L, CONF_I (conflict,
-# laptop / iPad version wins)
+# server / iPad version wins; _L = server side, _I = iPad side)
 _plan() {
     awk -v SF="$1" -v LF="$2" -v IF="$3" '
     function rest(s, n) { while (n-- > 0) sub(/^[^ ]* /, "", s); return s }
@@ -136,11 +144,11 @@ ipad_sync() {
     trap 'rm -rf "$tmp"' EXIT INT TERM
     touch "$STATE"
 
-    echo "== listing files on the laptop ($LAPTOP) ..."
-    _list_laptop > "$tmp/L" || { echo "ipad_sync: cannot list the laptop vault" >&2; return 1; }
+    echo "== listing files on the server ($SERVER) ..."
+    _list_server > "$tmp/L" || { echo "ipad_sync: cannot list the server vault" >&2; return 1; }
     echo "== listing files on the iPad ..."
     _list_ipad > "$tmp/I" || { echo "ipad_sync: cannot list the iPad vault" >&2; return 1; }
-    echo "   $(wc -l < "$tmp/L" | tr -d ' ') file(s) on the laptop, $(wc -l < "$tmp/I" | tr -d ' ') on the iPad"
+    echo "   $(wc -l < "$tmp/L" | tr -d ' ') file(s) on the server, $(wc -l < "$tmp/I" | tr -d ' ') on the iPad"
 
     cp "$STATE" "$tmp/S"
     _plan "$tmp/S" "$tmp/L" "$tmp/I" > "$tmp/plan" || { echo "ipad_sync: comparison failed" >&2; return 1; }
@@ -149,41 +157,41 @@ ipad_sync() {
     _pick "$tmp/plan" PULL CONF_L > "$tmp/pull"
     _pick "$tmp/plan" PUSH CONF_I > "$tmp/push"
     _pick "$tmp/plan" DEL_I CONF_L > "$tmp/trash_ipad"
-    _pick "$tmp/plan" DEL_L CONF_I > "$tmp/trash_laptop"
+    _pick "$tmp/plan" DEL_L CONF_I > "$tmp/trash_server"
 
     _show() { [ -s "$2" ] && { echo "  -- $1:"; sed 's/^/     /' "$2"; }; }
-    _pick "$tmp/plan" PULL   > "$tmp/x"; _show "laptop -> iPad" "$tmp/x"
-    _pick "$tmp/plan" PUSH   > "$tmp/x"; _show "iPad -> laptop" "$tmp/x"
-    _pick "$tmp/plan" DEL_I  > "$tmp/x"; _show "deleted on the laptop, removed on the iPad" "$tmp/x"
-    _pick "$tmp/plan" DEL_L  > "$tmp/x"; _show "deleted on the iPad, removed on the laptop" "$tmp/x"
-    _pick "$tmp/plan" CONF_L > "$tmp/x"; _show "CONFLICT, laptop version kept (iPad version to the trash)" "$tmp/x"
-    _pick "$tmp/plan" CONF_I > "$tmp/x"; _show "CONFLICT, iPad version kept (laptop version to the trash)" "$tmp/x"
-    [ -s "$tmp/trash_ipad" ] || [ -s "$tmp/trash_laptop" ] &&
+    _pick "$tmp/plan" PULL   > "$tmp/x"; _show "server -> iPad" "$tmp/x"
+    _pick "$tmp/plan" PUSH   > "$tmp/x"; _show "iPad -> server" "$tmp/x"
+    _pick "$tmp/plan" DEL_I  > "$tmp/x"; _show "deleted on the server, removed on the iPad" "$tmp/x"
+    _pick "$tmp/plan" DEL_L  > "$tmp/x"; _show "deleted on the iPad, removed on the server" "$tmp/x"
+    _pick "$tmp/plan" CONF_L > "$tmp/x"; _show "CONFLICT, server version kept (iPad version to the trash)" "$tmp/x"
+    _pick "$tmp/plan" CONF_I > "$tmp/x"; _show "CONFLICT, iPad version kept (server version to the trash)" "$tmp/x"
+    [ -s "$tmp/trash_ipad" ] || [ -s "$tmp/trash_server" ] &&
         echo "  (removed files are moved to <vault>/$TRASH/ on their side)"
     [ -n "$dry" ] && { echo "== dry run, nothing changed"; return 0; }
 
     if [ -s "$tmp/trash_ipad" ]; then
         _trash_script "$IPAD_VAULT" "$tmp/trash_ipad" | sh
     fi
-    if [ -s "$tmp/trash_laptop" ]; then
-        _trash_script "$LAPTOP_VAULT" "$tmp/trash_laptop" | $SSH "$LAPTOP" sh ||
-            echo "  ! moving files to the laptop trash failed" >&2
+    if [ -s "$tmp/trash_server" ]; then
+        _trash_script "$SERVER_VAULT" "$tmp/trash_server" | $SSH "$SERVER" sh ||
+            echo "  ! moving files to the server trash failed" >&2
     fi
 
     if [ -s "$tmp/pull" ]; then
-        echo "== laptop -> iPad: $(wc -l < "$tmp/pull" | tr -d ' ') file(s)"
-        $SSH "$LAPTOP" "cd $(_q "$LAPTOP_VAULT") && COPYFILE_DISABLE=1 tar cf - -T -" < "$tmp/pull" |
-            (cd "$IPAD_VAULT" && tar xmf -) || echo "  ! transfer laptop -> iPad failed" >&2
+        echo "== server -> iPad: $(wc -l < "$tmp/pull" | tr -d ' ') file(s)"
+        $SSH "$SERVER" "cd $(_q "$SERVER_VAULT") && COPYFILE_DISABLE=1 tar cf - -T -" < "$tmp/pull" |
+            (cd "$IPAD_VAULT" && tar xmf -) || echo "  ! transfer server -> iPad failed" >&2
     fi
     if [ -s "$tmp/push" ]; then
-        echo "== iPad -> laptop: $(wc -l < "$tmp/push" | tr -d ' ') file(s)"
+        echo "== iPad -> server: $(wc -l < "$tmp/push" | tr -d ' ') file(s)"
         (cd "$IPAD_VAULT" && tar cf - -T "$tmp/push") |
-            $SSH "$LAPTOP" "cd $(_q "$LAPTOP_VAULT") && tar xf -" || echo "  ! transfer iPad -> laptop failed" >&2
+            $SSH "$SERVER" "cd $(_q "$SERVER_VAULT") && tar xf -" || echo "  ! transfer iPad -> server failed" >&2
     fi
 
     # new state: files present on both sides, with their current (mtime, size)
     echo "== saving the sync state ..."
-    _list_laptop > "$tmp/L" && _list_ipad > "$tmp/I" || { echo "ipad_sync: cannot re-list, state not saved" >&2; return 1; }
+    _list_server > "$tmp/L" && _list_ipad > "$tmp/I" || { echo "ipad_sync: cannot re-list, state not saved" >&2; return 1; }
     awk -v LF="$tmp/L" '
         function rest(s) { sub(/^[^ ]* [^ ]* /, "", s); return s }
         FILENAME == LF { L[rest($0)] = $1 " " $2; next }

@@ -5,7 +5,7 @@ without the OneDrive app (they use [rclone](https://rclone.org)):
 
 | script      | what it does                                                        |
 |-------------|---------------------------------------------------------------------|
-| `sync.py`   | mirror the subfolders of `~/Documents/Lab-Notebook` to OneDrive     |
+| `sync.py`   | mirror the subfolders of `~/Documents/Lab-Notebook` to OneDrive (`--pull`: get the OneDrive changes) |
 | `delete.py` | delete folder(s) on OneDrive (to a trash folder by default)         |
 | `common.py` | shared settings (local folder, rclone remote, OneDrive folder) and helpers |
 
@@ -18,12 +18,18 @@ rclone config              # n -> name "onedrive" -> Microsoft OneDrive -> log i
 If the login asks for admin approval, the institution blocks rclone for this
 account: ask IT to allow it.
 
+On a machine without a browser (e.g. the Linux workstation over ssh), answer
+"n" to "Use web browser to automatically authenticate?": rclone then gives a
+`rclone authorize "onedrive" ...` command to run on a computer with a browser
+(the MacBook), and you paste the token it prints back into the ssh session.
+
 ## Sync
 
 ```
 python utils/onedrive/sync.py -n               # dry run (show what would be done)
 python utils/onedrive/sync.py                  # sync every subfolder
 python utils/onedrive/sync.py Grants Projects  # sync only these subfolders
+python utils/onedrive/sync.py --pull           # OneDrive -> here (also: --pull Grants, --pull -n)
 ```
 
 - each subfolder of `~/Documents/Lab-Notebook` goes to the folder of the same name in
@@ -33,6 +39,10 @@ python utils/onedrive/sync.py Grants Projects  # sync only these subfolders
   `Lab-Notebook/.sync-trash/<date_time>/<subfolder>/` on OneDrive
 - not synced: hidden folders (`.obsidian`, `.git`, ...) and files at the top level of
   the Lab-Notebook; git material and system files (`.DS_Store`, ...) are skipped everywhere
+- `--pull` goes the other way, for a computer without the OneDrive app (Linux
+  workstation), and to fill a new local copy: only new files and files newer on OneDrive
+  are copied here, nothing is deleted locally (the trash folder is not copied).
+  Typical session there: `sync.py --pull`, work, `sync.py`.
 
 ## Delete
 
