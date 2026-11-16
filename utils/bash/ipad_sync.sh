@@ -25,15 +25,23 @@
 #   first sync (no state): a file present on both sides with the same size is
 #   considered identical, otherwise treated as a conflict.
 #
-# Needs in iSH: openssh-client (ssh keys to the laptop), and a tar supporting
-# -T (busybox tar does; otherwise `apk add tar`). The vault must be mounted:
+# The "laptop" side is the first reachable host of $HOSTS (macbook, then the
+# lab server); set LAPTOP=user@host to force one. Each host has its own sync
+# state ($HOME/.ipad_sync.<host>.state), so alternating between them is safe.
+#
+# Needs in iSH: openssh-client (ssh keys to the hosts, `macbook` and
+# `lab-server` defined in ~/.ssh/config: HostName fd10::9 and fd10::1), and a
+# tar supporting -T (busybox tar does; otherwise `apk add tar`). The vault
+# must be mounted:
 #   mount -t ios . /mnt/Lab-Notebook      (pick the Obsidian vault folder)
 # ---------------------------------------------------------------------------
 
-LAPTOP="${LAPTOP:-yann@macbook}"                                 # (ssh config)
-LAPTOP_VAULT="${LAPTOP_VAULT:-Documents/Notebook}"      # relative to the laptop's ~
+HOSTS="${HOSTS:-yann@macbook yann@lab-server}"            # (ssh config), by priority
+LAPTOP="${LAPTOP:-}"                                      # empty = first reachable of $HOSTS
+LAPTOP_VAULT="${LAPTOP_VAULT:-Documents/Notebook}"      # relative to the host's ~
 IPAD_VAULT="${IPAD_VAULT:-/mnt/Notebook}"
-STATE="${STATE:-$HOME/.ipad_sync.state}"
+STATE="${STATE:-}"                                        # empty = per host, see _pick_host
+_LAPTOP0="$LAPTOP"; _STATE0="$STATE"      # re-picked at each run (when sourced)
 
 # the whole vault is synced, restricted to these extensions (empty = all files)
 SYNC_EXT="md canvas png jpg jpeg gif svg pdf"
@@ -78,6 +86,27 @@ done <<'__SYNC_LIST__'
 EOF
     cat "$2"
     echo "__SYNC_LIST__"
+}
+
+# sets LAPTOP to the first host of $HOSTS answering over ssh (unless already
+# set), and STATE to that host's state file (unless already set)
+_pick_host() {
+    if [ -z "$LAPTOP" ]; then
+        for h in $HOSTS; do
+            echo "== trying $h ..."
+            if $SSH -o BatchMode=yes -o ConnectTimeout=5 "$h" true 2>/dev/null; then
+                LAPTOP="$h"; break
+            fi
+        done
+        [ -n "$LAPTOP" ] || { echo "ipad_sync: no host reachable among: $HOSTS" >&2; return 1; }
+    fi
+    if [ -z "$STATE" ]; then
+        STATE="$HOME/.ipad_sync.${LAPTOP#*@}.state"
+        # state of the single-host version of this script (it synced with the macbook)
+        [ ! -e "$STATE" ] && [ "${LAPTOP#*@}" = macbook ] && [ -e "$HOME/.ipad_sync.state" ] &&
+            mv "$HOME/.ipad_sync.state" "$STATE"
+    fi
+    echo "== syncing with $LAPTOP"
 }
 
 _list_laptop() { _list_script "$LAPTOP_VAULT" | $SSH "$LAPTOP" sh; }
@@ -131,6 +160,8 @@ ipad_sync() {
         esac
     done
     [ -d "$IPAD_VAULT" ] || { echo "ipad_sync: $IPAD_VAULT not found (mount -t ios . $IPAD_VAULT)" >&2; return 1; }
+    LAPTOP="$_LAPTOP0"; STATE="$_STATE0"
+    _pick_host || return 1
 
     tmp=$(mktemp -d) || return 1
     trap 'rm -rf "$tmp"' EXIT INT TERM
