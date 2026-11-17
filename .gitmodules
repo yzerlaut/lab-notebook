@@ -13,3 +13,6 @@
 [submodule "utils/presentations"]
 	path = utils/presentations
 	url = https://github.com/yzerlaut/presentations.git
+[submodule "statemod-network"]
+	path = statemod-network
+	url = https://github.com/movitzle/statemod-network.git
