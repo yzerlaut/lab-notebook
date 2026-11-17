@@ -35,8 +35,10 @@ def get_archive_folder_and_timestamp():
 
 def commit_and_push(paths, message):
 
-    repo.index.add(paths)
-    repo.index.commit(message)
+    # commit *only* the archived paths: anything else already staged
+    # stays staged (index.commit would sweep the whole index in)
+    repo.git.add('--', *paths)
+    repo.git.commit('-m', message, '--only', '--', *paths)
     try:
         repo.remotes.origin.push()
         print('  [ok] successfully pushed')
