@@ -134,3 +134,28 @@ python utils/onedrive/sync.py -n                   # dry run, then without -n
 python utils/onedrive/delete.py Projects/old-stuff
 ```
 See [utils/onedrive/README.md](utils/onedrive/README.md) for the setup and all options.
+
+### 4) iPad (Obsidian vault)
+
+`utils/bash/ipad_sync.sh` is a two-way sync of the Obsidian vault between the iPad (run in
+[iSH](https://ish.app)) and a remote: the first reachable of `macbook`, then `lab-server`
+(ssh aliases in the iSH `~/.ssh/config`). Mount the vault in iSH first
+(`mount -t ios . /mnt/Notebook`, pick the vault folder), then:
+```
+sh ipad_sync.sh -n              # dry run: show the plan only
+sh ipad_sync.sh                 # two-way sync
+sh ipad_sync.sh --force-pull    # the remote is right: make the iPad identical to it
+sh ipad_sync.sh --force-push    # the iPad is right: make the remote identical to it
+sh ipad_sync.sh -y              # no confirmation question
+REMOTE=yann@lab-server sh ipad_sync.sh     # force the remote host
+```
+- In a two-way sync, each file goes from the side where it changed (vs. the last sync) to the
+  other; on a conflict, the most recent version wins.
+- Removed or overwritten files are never deleted: they go to `<vault>/.sync-trash/<date>/` on
+  their side.
+- When more than 20 files would change (`MAX_CHANGES=20`), the plan is shown and a yes/no
+  confirmation is asked. This catches a vault that is not (or wrongly) mounted after a
+  re-mount, which would otherwise look like "all files deleted on the iPad". In that case
+  answer no, fix the mount, and if needed restore with `--force-pull`.
+- Other settings (environment variables): `REMOTE_VAULT` (default `Documents/Notebook`, in the
+  remote's `~`), `IPAD_VAULT` (default `/mnt/Notebook`), `HOSTS`. See the header of the script.
