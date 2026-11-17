@@ -1,8 +1,18 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["gitpython"]
+# ///
+"""
+usage (from anywhere in the repo):
+    uv run utils/archive.py your-script.py
+"""
 import datetime, pathlib
 import os, shutil, argparse
 import git # pip install gitpython
 
-ARCHIVE = '_archives'
+# repo root = parent of utils/ ; archives always land in <root>/_archives
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ARCHIVE = os.path.join(ROOT, '_archives')
 
 IGNORE = shutil.ignore_patterns('__pycache__', '*.pyc',
                                 '.ipynb_checkpoints', '.DS_Store')
@@ -123,14 +133,14 @@ def is_in_archive(path):
 
 if __name__=='__main__':
 
-    repo = git.Repo(os.path.dirname(__file__))
+    repo = git.Repo(ROOT)
 
     parser=argparse.ArgumentParser(description="""
 
         archive a given script (or folder of scripts) in the lab notebook
 
-        python archive.py your-script.py
-        python archive.py your-folder-of-scripts/
+        uv run utils/archive.py your-script.py
+        uv run utils/archive.py your-folder-of-scripts/
 
         N.B. 
             [de-archive] TBD

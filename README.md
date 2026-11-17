@@ -73,7 +73,7 @@ uv run python -c "import physion; print(physion.__file__)"
 ### 1) Archive
 
 ```
-python tools/archive.py the-script-you-want-to-back-up
+uv run utils/archive.py the-script-you-want-to-back-up
 ```
 
 This will:
@@ -84,7 +84,7 @@ This will:
 It also works with a whole folder of scripts:
 
 ```
-python archive.py Medicine-Programming-Projects/
+uv run utils/archive.py Medicine-Programming-Projects/
 ```
 
 The folder is copied (without `__pycache__` or `.ipynb_checkpoints`) as
