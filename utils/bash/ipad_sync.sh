@@ -20,10 +20,13 @@
 #   1. list (mtime, size) of the vault files on both sides (1 ssh call)
 #   2. compare with the state saved at the end of the previous sync, to tell
 #      which side changed, created or deleted each file
+#   2b. files present on both sides but with a different (mtime, size) are
+#      compared by content (md5): identical ones are left alone (1 ssh call)
 #   3. move deleted / conflict-losing files to .sync-trash/<date>/ (in the
 #      vault, on the side where they are removed; Obsidian ignores dot folders)
 #   4. transfer in one tar stream per direction (2 ssh calls)
-#   5. re-list both sides and save the new state
+#   5. stat the transferred files again and save the new state
+#   (a single ssh connection is opened and shared by all these calls)
 #
 # Rules, per file:
 #   changed on one side only          -> copied to the other side
@@ -34,8 +37,10 @@
 #   the other                         -> the modified one is restored
 #   changed on both sides (conflict)  -> the most recent wins, the other copy
 #                                        goes to the trash
-#   first sync (no state): a file present on both sides with the same size is
-#   considered identical, otherwise treated as a conflict.
+#   first sync (no state): a file present on both sides is compared by
+#   content, identical -> left as is, different -> conflict.
+#   A file whose content is identical on both sides is never copied nor
+#   trashed, whatever its timestamps.
 #
 # The "remote" side is the first reachable host of $HOSTS (macbook, then the
 # lab server); set REMOTE=user@host to force one. Each host has its own sync
@@ -48,7 +53,7 @@
 #   mount -t ios . /mnt/Lab-Notebook      (pick the Obsidian vault folder)
 # ---------------------------------------------------------------------------
 
-HOSTS="${HOSTS:-yann@macbook yann@lab-server}"            # (ssh config), by priority
+HOSTS="${HOSTS:-macbook lab-server}"            # (ssh config), by priority
 REMOTE="${REMOTE:-}"                                      # empty = first reachable of $HOSTS
 REMOTE_VAULT="${REMOTE_VAULT:-Documents/Notebook}"      # relative to the host's ~
 IPAD_VAULT="${IPAD_VAULT:-/mnt/Notebook}"
@@ -63,16 +68,20 @@ SKIP='.git .obsidian .trash .sync-trash .DS_Store ~$* .~lock.*'
 MAX_CHANGES="${MAX_CHANGES:-20}"   # more file changes than this -> ask for confirmation
 
 SSH="${SSH:-ssh -o ServerAliveInterval=15 -o ConnectTimeout=10}"
+_SSH0="$SSH"                              # $SSH gets the connection sharing options at each run
 TRASH=".sync-trash/$(date +%Y-%m-%d_%H.%M.%S)"
 
 # quote for a shell: abc'd -> 'abc'\''d'
 _q() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 
+# shell line choosing the stat format "mtime size path" (GNU/busybox or BSD)
+_STATFMT='if stat -c %Y . >/dev/null 2>&1; then fmt="-c"; f="%Y %s %n"; else fmt="-f"; f="%m %z %N"; fi'
+
 # shell script printing "mtime size path" for the synced files of vault $1
-# (piped to `sh` locally or on the remote, works with GNU/busybox and BSD stat)
+# (piped to `sh` locally or on the remote)
 _list_script() {
     printf 'cd %s || exit 1\n' "$(_q "$1")"
-    printf 'if stat -c %%Y . >/dev/null 2>&1; then fmt="-c"; f="%%Y %%s %%n"; else fmt="-f"; f="%%m %%z %%N"; fi\n'
+    printf '%s\n' "$_STATFMT"
     set -f    # no globbing of the patterns below
     o=; printf 'find . \\('
     for s in $SKIP; do printf '%s -name %s' "$o" "$(_q "$s")"; o=' -o'; done
@@ -85,6 +94,30 @@ _list_script() {
     set +f
     # "mtime size ./path" -> "mtime size path"
     printf ' -exec stat "$fmt" "$f" {} + | sed %s\n' "$(_q 's/^\([0-9]* [0-9]*\) \.\//\1 /')"
+}
+
+# shell script printing "mtime size path" for the files listed in $2
+# (vault-relative) of vault $1 (missing files are skipped)
+_stat_script() {
+    printf 'cd %s || exit 1\n' "$(_q "$1")"
+    printf '%s\n' "$_STATFMT"
+    cat <<'EOF'
+tr '\n' '\0' <<'__SYNC_LIST__' | xargs -0 stat "$fmt" "$f" 2>/dev/null
+EOF
+    cat "$2"
+    echo "__SYNC_LIST__"
+}
+
+# _update_list <list> <new stats> <removed paths...>: the list without the
+# removed paths, plus the new stats
+_update_list() {
+    l="$1"; n="$2"; shift 2
+    cat "$@" > "$l.rm"
+    awk -v RF="$l.rm" '
+        function rest(s) { sub(/^[^ ]* [^ ]* /, "", s); return s }
+        FILENAME == RF { R[$0] = 1; next }
+        !(rest($0) in R)' "$l.rm" "$l"
+    cat "$n"; rm -f "$l.rm"
 }
 
 # shell script moving the files listed in $2 (vault-relative) of vault $1 to
@@ -100,6 +133,56 @@ done <<'__SYNC_LIST__'
 EOF
     cat "$2"
     echo "__SYNC_LIST__"
+}
+
+# shell script printing "hash<tab>path" for the files listed in $2
+# (vault-relative) of vault $1 (md5 with md5sum or BSD md5; cksum otherwise:
+# if the two sides use different tools, the hashes never match and such files
+# are handled as different)
+_hash_script() {
+    printf 'cd %s || exit 1\n' "$(_q "$1")"
+    cat <<'EOF'
+if command -v md5sum >/dev/null 2>&1; then H=md5sum
+elif command -v md5 >/dev/null 2>&1; then H="md5 -r"
+else H=cksum; fi
+# one hashing process for all the files (forks are very slow on iSH)
+tr '\n' '\0' <<'__SYNC_LIST__' | xargs -0 $H 2>/dev/null | sed 's/^\([^ ]*\)  */\1	/'
+EOF
+    cat "$2"
+    echo "__SYNC_LIST__"
+}
+
+# _both <plan> <remote list> <ipad list>: paths of the copy / conflict actions
+# whose file exists on both sides with the same size (candidates for the
+# content check; files of different sizes differ, no need to read them)
+_both() {
+    awk -v PF="$1" -v LF="$2" -v IF="$3" '
+    function rest(s, n) { while (n-- > 0) sub(/^[^ ]* /, "", s); return s }
+    FILENAME == LF { L[rest($0, 2)] = $2; next }
+    FILENAME == IF { I[rest($0, 2)] = $2; next }
+    FILENAME == PF { a = $0; sub(/\t.*/, "", a); p = $0; sub(/^[^\t]*\t/, "", p)
+        if (a ~ /^(PULL|PUSH|CONF_L|CONF_I)$/ && (p in L) && (p in I) && L[p] == I[p]) print p }' "$2" "$3" "$1"
+}
+
+# _drop_same <plan> <remote hashes> <ipad hashes>: the plan without the files
+# whose content is identical on both sides (only mtime differs)
+_drop_same() {
+    awk -v LH="$2" -v IH="$3" '
+    function path(s) { sub(/^[^\t]*\t/, "", s); return s }
+    function key(s)  { sub(/\t.*/, "", s); return s }
+    FILENAME == LH { L[path($0)] = key($0); next }
+    FILENAME == IH { I[path($0)] = key($0); next }
+    { p = path($0); if (!((p in L) && (p in I) && L[p] == I[p])) print }' "$2" "$3" "$1"
+}
+
+# _save_state <remote list> <ipad list>: files present on both sides, with
+# their current (mtime, size)
+_save_state() {
+    awk -v LF="$1" '
+        function rest(s) { sub(/^[^ ]* [^ ]* /, "", s); return s }
+        FILENAME == LF { L[rest($0)] = $1 " " $2; next }
+        { p = rest($0); if (p in L) print L[p], $1, $2, p }' "$1" "$2" > "$STATE.new" &&
+        mv "$STATE.new" "$STATE"
 }
 
 # sets REMOTE to the first host of $HOSTS answering over ssh (unless already
@@ -138,16 +221,15 @@ _plan() {
     FILENAME == LF { p = rest($0, 2); L[p] = $1 " " $2; all[p] = 1; next }
     FILENAME == IF { p = rest($0, 2); I[p] = $1 " " $2; all[p] = 1; next }
     function mt(x,  v) { split(x, v, " "); return v[1] + 0 }
-    function sz(x,  v) { split(x, v, " "); return v[2] }
     END {
         for (p in all) {
             inL = (p in L); inI = (p in I); inS = (p in S)
             lchg = inL && (!inS || L[p] != S[p])
             ichg = inI && (!inS || I[p] != SI[p])
             a = ""
-            # same file on both sides: unchanged since the last sync (or, with
-            # no state, same size as for the first sync)
-            same = inL && inI && (inS ? (L[p] == S[p] && I[p] == SI[p]) : sz(L[p]) == sz(I[p]))
+            # same file on both sides: unchanged since the last sync (with no
+            # state, the content check after the plan decides)
+            same = inL && inI && inS && L[p] == S[p] && I[p] == SI[p]
             if (FORCE == "pull") {
                 if (inL && !inI) a = "PULL"
                 else if (inL && !same) a = "CONF_L"
@@ -157,7 +239,7 @@ _plan() {
                 else if (inI && !same) a = "CONF_I"
                 else if (!inI) a = "DEL_L"
             } else if (inL && inI) {
-                if (!inS) { if (sz(L[p]) != sz(I[p])) a = (mt(L[p]) >= mt(I[p])) ? "CONF_L" : "CONF_I" }
+                if (!inS) a = (mt(L[p]) >= mt(I[p])) ? "CONF_L" : "CONF_I"
                 else if (lchg && ichg) a = (mt(L[p]) >= mt(I[p])) ? "CONF_L" : "CONF_I"
                 else if (lchg) a = "PULL"
                 else if (ichg) a = "PUSH"
@@ -193,21 +275,51 @@ ipad_sync() {
     done
     [ -d "$IPAD_VAULT" ] || { echo "ipad_sync: $IPAD_VAULT not found (mount -t ios . $IPAD_VAULT)" >&2; return 1; }
     REMOTE="$_REMOTE0"; STATE="$_STATE0"
-    _pick_host || return 1
+    t0=$(date +%s)
 
+    # one ssh connection for the whole run (the ssh handshake takes seconds on
+    # iSH): the first call opens it, the next ones go through it
     tmp=$(mktemp -d) || return 1
-    trap 'rm -rf "$tmp"' EXIT INT TERM
+    SSH="$_SSH0 -o ControlMaster=auto -o ControlPath=$tmp/mux -o ControlPersist=60"
+    trap '[ -n "$REMOTE" ] && $SSH -O exit "$REMOTE" 2>/dev/null; rm -rf "$tmp"' EXIT INT TERM
+
+    _pick_host || return 1
     touch "$STATE"
 
-    echo "== listing files on the remote ($REMOTE) ..."
-    _list_remote > "$tmp/L" || { echo "ipad_sync: cannot list the remote vault" >&2; return 1; }
-    echo "== listing files on the iPad ..."
-    _list_ipad > "$tmp/I" || { echo "ipad_sync: cannot list the iPad vault" >&2; return 1; }
-    echo "   $(wc -l < "$tmp/L" | tr -d ' ') file(s) on the remote, $(wc -l < "$tmp/I" | tr -d ' ') on the iPad"
+    echo "== listing files on both sides ..."
+    _list_remote > "$tmp/L" & lpid=$!
+    _list_ipad > "$tmp/I" || { echo "ipad_sync: cannot list the iPad vault" >&2; wait; return 1; }
+    wait "$lpid" || { echo "ipad_sync: cannot list the remote vault" >&2; return 1; }
+    echo "   $(wc -l < "$tmp/L" | tr -d ' ') file(s) on the remote, $(wc -l < "$tmp/I" | tr -d ' ') on the iPad [$(( $(date +%s) - t0 ))s]"
 
     cp "$STATE" "$tmp/S"
     _plan "$tmp/S" "$tmp/L" "$tmp/I" "$force" > "$tmp/plan" || { echo "ipad_sync: comparison failed" >&2; return 1; }
     if [ ! -s "$tmp/plan" ]; then echo "== already in sync"; return 0; fi
+
+    # files present on both sides whose (mtime, size) differ: compare contents,
+    # identical ones are left alone (only their timestamp differs)
+    _both "$tmp/plan" "$tmp/L" "$tmp/I" > "$tmp/both"
+    if [ -s "$tmp/both" ]; then
+        echo "== comparing the content of $(wc -l < "$tmp/both" | tr -d ' ') file(s) present on both sides ..."
+        # both sides hashed in parallel
+        _hash_script "$REMOTE_VAULT" "$tmp/both" | $SSH "$REMOTE" sh > "$tmp/HL" & hpid=$!
+        _hash_script "$IPAD_VAULT" "$tmp/both" | sh > "$tmp/HI"
+        wait "$hpid"
+        # (pipeline statuses are sed's: check that every file got a hash)
+        nb=$(wc -l < "$tmp/both")
+        if [ "$(wc -l < "$tmp/HL")" -eq "$nb" ] && [ "$(wc -l < "$tmp/HI")" -eq "$nb" ]; then
+            _drop_same "$tmp/plan" "$tmp/HL" "$tmp/HI" > "$tmp/plan2" && mv "$tmp/plan2" "$tmp/plan"
+            nsame=$(( $(wc -l < "$tmp/both") - $(_both "$tmp/plan" "$tmp/L" "$tmp/I" | wc -l) ))
+            [ "$nsame" -gt 0 ] && echo "   $nsame file(s) with identical content (only the timestamp differs): left as is"
+            echo "   [$(( $(date +%s) - t0 ))s]"
+        else
+            echo "ipad_sync: content comparison failed, nothing changed" >&2; return 1
+        fi
+        if [ ! -s "$tmp/plan" ]; then
+            [ -z "$dry" ] && _save_state "$tmp/L" "$tmp/I"
+            echo "== already in sync"; return 0
+        fi
+    fi
     [ -n "$force" ] && echo "== forced $force: the $( [ "$force" = pull ] && echo remote || echo iPad) side is kept"
 
     _pick "$tmp/plan" PULL CONF_L > "$tmp/pull"
@@ -262,15 +374,19 @@ ipad_sync() {
             $SSH "$REMOTE" "cd $(_q "$REMOTE_VAULT") && tar xf -" || echo "  ! transfer iPad -> remote failed" >&2
     fi
 
-    # new state: files present on both sides, with their current (mtime, size)
+    # new state: files present on both sides, with their current (mtime, size);
+    # only the files touched by this run are stat-ed again
     echo "== saving the sync state ..."
-    _list_remote > "$tmp/L" && _list_ipad > "$tmp/I" || { echo "ipad_sync: cannot re-list, state not saved" >&2; return 1; }
-    awk -v LF="$tmp/L" '
-        function rest(s) { sub(/^[^ ]* [^ ]* /, "", s); return s }
-        FILENAME == LF { L[rest($0)] = $1 " " $2; next }
-        { p = rest($0); if (p in L) print L[p], $1, $2, p }' "$tmp/L" "$tmp/I" > "$STATE.new" &&
-        mv "$STATE.new" "$STATE"
-    echo "== done"
+    : > "$tmp/nL"; : > "$tmp/nI"
+    if [ -s "$tmp/push" ]; then
+        _stat_script "$REMOTE_VAULT" "$tmp/push" | $SSH "$REMOTE" sh > "$tmp/nL" ||
+            { echo "ipad_sync: cannot stat the remote files, state not saved" >&2; return 1; }
+    fi
+    [ -s "$tmp/pull" ] && _stat_script "$IPAD_VAULT" "$tmp/pull" | sh > "$tmp/nI"
+    _update_list "$tmp/L" "$tmp/nL" "$tmp/trash_remote" "$tmp/push" > "$tmp/L2" &&
+        _update_list "$tmp/I" "$tmp/nI" "$tmp/trash_ipad" "$tmp/pull" > "$tmp/I2" &&
+        _save_state "$tmp/L2" "$tmp/I2"
+    echo "== done [$(( $(date +%s) - t0 ))s]"
 }
 
 # run when executed (not when sourced from an interactive shell)
