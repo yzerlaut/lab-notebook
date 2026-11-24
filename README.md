@@ -2,7 +2,9 @@
 
 ## Setup (with `uv`)
 
-A Python 3.14 environment in `.venv/` at the root of the repository, with `physion` installed in editable mode (changes in `physion/src` apply without reinstalling).
+A Python 3.14 environment in `.venv/` at the root of the repository, defined by
+`pyproject.toml` (+ `.python-version`, `uv.lock`), with `physion` installed in editable mode
+(changes in `physion/src` apply without reinstalling), plus `ipykernel` and `pytest`.
 
 1. Install `uv` (once per machine):
     ```
@@ -17,50 +19,38 @@ A Python 3.14 environment in `.venv/` at the root of the repository, with `physi
     ```
     (in an existing clone: `git submodule update --init --recursive`)
 
-3. Create the environment (`uv` downloads Python 3.14 if needed):
+3. Create/update the environment (`uv` downloads Python 3.14 if needed):
     ```
-    uv venv --python 3.14
+    uv sync
     ```
+    with optional dependencies of `physion` as needed: `uv sync --extra ephys`
+    (extras: `ephys`, `acquisition`, `diffusion`; `--all-extras` for all of them).
+    Re-run `uv sync` after a change of `pyproject.toml` or of the `physion` dependencies.
 
-4. Install `physion` in editable mode:
+4. Use it, either without activating it (from the repository folders):
     ```
-    uv pip install -e ./physion
+    uv run python my-script.py
     ```
-    with the optional dependencies of `physion/pyproject.toml` as needed, e.g.:
-    ```
-    uv pip install -e "./physion[ephys,test]"
-    ```
-    (extras: `ephys`, `acquisition`, `diffusion`, `test`)
-
-5. Use it, either by activating the environment:
+    or by activating it:
     ```
     source .venv/bin/activate
     python my-script.py
     ```
-    or without activating it, from the repository folders:
+    [!!] from inside a submodule with its own `pyproject.toml` (`physion/`,
+    `statemod-network/`, `utils/spiking_network_dynamics/`), `uv run` uses that
+    submodule's own environment (`<submodule>/.venv`), not the root one.
+
+5. VS Code (with the repository root as workspace folder): `.venv/bin/python` is the
+    default interpreter, set in `.vscode/settings.json` (tracked in git):
+    ```json
+    {
+        "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+        "python.terminal.activateEnvironment": true
+    }
     ```
-    uv run python my-script.py
-    ```
-    [!!] not from inside `physion/`: there `uv run` finds `physion/pyproject.toml` and
-    creates a separate `physion/.venv` (activate the environment instead)
-6. VS Code (with the repository root as workspace folder):
-    - the Interactive Window and notebooks need `ipykernel` in the environment:
-        ```
-        uv pip install ipykernel
-        ```
-    - Cmd+Shift+P -> "Python: Select Interpreter" -> `.venv/bin/python`
-        (if not listed: "Enter interpreter path..." -> `./.venv/bin/python`)
+    - if not picked up: Cmd+Shift+P -> "Python: Select Interpreter" -> `.venv/bin/python`
     - in the Interactive Window or a notebook: kernel picker (top right)
         -> "Python Environments" -> `.venv`
-    - default of the workspace, already set in `.vscode/settings.json` (tracked in git):
-        ```json
-        {
-            "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
-            "python.terminal.activateEnvironment": true
-        }
-        ```
-        (the second line activates `.venv` in each new VS Code terminal)
-    - check, in a cell: `import sys; print(sys.executable)` -> `.../lab-notebook/.venv/bin/python`
 
 To check the installation:
 ```

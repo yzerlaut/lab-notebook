@@ -1,0 +1,37 @@
+# Environment of the lab notebook (root `.venv/`), managed with `uv`:
+#     uv sync                       # base install
+#     uv sync --extra ephys         # + optional dependencies of physion
+#
+# Not a uv workspace on purpose: the submodules (physion, statemod-network,
+# utils/spiking_network_dynamics) keep their own pyproject.toml, uv.lock and .venv,
+# and `uv` run from inside one of them only sees that submodule's project.
+# physion is a plain (editable) path dependency here.
+
+[project]
+name = "lab-notebook"
+version = "0.1.0"
+description = "Laboratory notebook: analysis scripts on top of physion"
+requires-python = ">=3.14"
+dependencies = [
+    "gitpython>=3.2.1",
+    "physion",
+]
+
+[project.optional-dependencies]
+# pass-through to the extras of physion/pyproject.toml
+ephys = ["physion[ephys]"]
+acquisition = ["physion[acquisition]"]
+diffusion = ["physion[diffusion]"]
+
+[dependency-groups]
+# installed by default by `uv sync` / `uv run`
+dev = [
+    "ipykernel",  # VS Code Interactive Window and notebooks
+    "pytest",
+]
+
+[tool.uv]
+package = false  # the root is not a package to build/install, only an environment
+
+[tool.uv.sources]
+physion = { path = "physion", editable = true }
